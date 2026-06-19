@@ -1,9 +1,9 @@
 {
   "llm": {
-    "base_url": "https://api.deepseek.com/v1",
+    "base_url": "https://open.bigmodel.cn/api/paas/v4",
     "api_key": "",
-    "model": "deepseek-v4-flash",
-    "max_tokens": 256,
+    "model": "glm-4.7-flash",
+    "max_tokens": 1024,
     "temperature": 0.8,
     "json_mode": false,
     "daily_limit": 50

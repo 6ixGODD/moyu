@@ -9,41 +9,31 @@
 #include <string.h>
 
 // ---------------------------------------------------------------------------
-// Builtin procedural skin: a cute round blob mascot with big eyes, blush, and
-// little ears. 20 frames of 32x32, laid out as:
-//   idle    0..3    blink   4..5    sleep   6..9
-//   happy  10..13   sad    14..17   observe 18..19
-// Everything here is plain code — no asset files — so the default pet is
-// guaranteed visible with zero dependencies.
+// Builtin procedural skin: a MINIMALIST blob. One rounded body, two dot eyes,
+// a tiny mouth. No ears, no glint, no highlight, no blush — just enough to
+// read as a small living creature. The whole point is "simple and clean".
+//
+// 20 frames of 32x32, same layout the anim table expects:
+//   idle 0..3   blink 4..5   sleep 6..9   happy 10..13   sad 14..17   observe 18..19
 // ---------------------------------------------------------------------------
 
 #define FW 32
 #define FH 32
 
-// NOTE: these are deliberately NOT const. An earlier version declared them
-// `static const uint32_t C_X = 0;` and mutated them via cast in init_colors();
-// under /O2 the compiler folded them to 0, so every body/eye/mouth pixel was
-// fully transparent and the pet was invisible. Keep them mutable.
-static uint32_t C_BODY, C_BODY_DARK, C_OUTLINE, C_WHITE, C_DARK, C_BLUSH, C_Z,
-    C_TEAR, C_EAR;
+// Mutable (NOT const — see git history: const-folded colors made the pet
+// invisible under /O2).
+static uint32_t C_BODY, C_OUTLINE, C_DARK, C_Z, C_TEAR;
 
-static uint32_t rgba(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
-  return ((uint32_t)r << 24) | ((uint32_t)g << 16) | ((uint32_t)b << 8) | a;
-}
 static uint32_t rgb(uint8_t r, uint8_t g, uint8_t b) {
-  return rgba(r, g, b, 255);
+  return ((uint32_t)r << 24) | ((uint32_t)g << 16) | ((uint32_t)b << 8) | 255u;
 }
 
 static void init_colors(void) {
-  C_BODY = rgb(122, 201, 236);      // sky blue
-  C_BODY_DARK = rgb(92, 164, 206);  // underside shadow
-  C_OUTLINE = rgb(44, 60, 92);      // dark outline
-  C_WHITE = rgb(250, 250, 255);
-  C_DARK = rgb(40, 50, 70);
-  C_BLUSH = rgb(245, 150, 165);
-  C_Z = rgb(170, 195, 220);
-  C_TEAR = rgb(120, 180, 240);
-  C_EAR = rgb(150, 215, 240);
+  C_BODY = rgb(244, 241, 234);     // warm off-white (reads clean on any desktop)
+  C_OUTLINE = rgb(54, 54, 64);     // soft charcoal outline
+  C_DARK = rgb(48, 48, 58);        // eyes / mouth
+  C_Z = rgb(150, 150, 165);
+  C_TEAR = rgb(140, 185, 235);
 }
 
 static void put_px(uint32_t* f, int x, int y, uint32_t c) {
@@ -55,7 +45,6 @@ static void fill_ellipse(
     uint32_t* f, int cx, int cy, int rx, int ry, uint32_t c) {
   for (int y = -ry; y <= ry; y++) {
     for (int x = -rx; x <= rx; x++) {
-      // (x/rx)^2 + (y/ry)^2 <= 1, scaled to avoid floats
       long dx = (long)x * 16 / (rx > 0 ? rx : 1);
       long dy = (long)y * 16 / (ry > 0 ? ry : 1);
       if (dx * dx + dy * dy <= 256) put_px(f, cx + x, cy + y, c);
@@ -63,115 +52,80 @@ static void fill_ellipse(
   }
 }
 
-static void rect_filled(
-    uint32_t* f, int x0, int y0, int x1, int y1, uint32_t c) {
-  for (int y = y0; y <= y1; y++)
-    for (int x = x0; x <= x1; x++)
-      put_px(f, x, y, c);
-}
-
 static void hline(uint32_t* f, int x0, int x1, int y, uint32_t c) {
-  for (int x = x0; x <= x1; x++)
-    put_px(f, x, y, c);
+  for (int x = x0; x <= x1; x++) put_px(f, x, y, c);
 }
 
 static void clear_frame(uint32_t* f) {
-  for (int i = 0; i < FW * FH; i++)
-    f[i] = 0;
+  for (int i = 0; i < FW * FH; i++) f[i] = 0;
 }
 
-// Draw the body: outline ellipse, body fill, underside shadow, two ears.
+// Minimal body: outline ring + single fill. Nothing else.
 static void draw_body(uint32_t* f, int yoff, int squish) {
-  int rx = 11 + squish;
-  int ry = 9 - squish;
-  int cx = 16, cy = 19 + yoff;
-  // outline
+  int rx = 9 + squish;
+  int ry = 8 - squish;
+  int cx = 16, cy = 18 + yoff;
   fill_ellipse(f, cx, cy, rx + 1, ry + 1, C_OUTLINE);
-  // body
   fill_ellipse(f, cx, cy, rx, ry, C_BODY);
-  // underside shadow
-  fill_ellipse(f, cx, cy + 3, rx - 2, ry - 4, C_BODY_DARK);
-  // ears: two little round bumps on top
-  fill_ellipse(f, 9, 9 + yoff, 3, 3, C_OUTLINE);
-  fill_ellipse(f, 9, 9 + yoff, 2, 2, C_EAR);
-  fill_ellipse(f, 23, 9 + yoff, 3, 3, C_OUTLINE);
-  fill_ellipse(f, 23, 9 + yoff, 2, 2, C_EAR);
 }
 
-// eye_mode: 0 open, 1 closed/blink, 2 happy ^_^
-// dirx: -1 look left, 0 center, 1 look right
+// eye_mode: 0 open dots, 1 closed line, 2 happy ^^
+// dirx: -1 / 0 / +1 look direction (observe)
 static void draw_eyes(uint32_t* f, int yoff, int eye_mode, int dirx) {
-  int lx = 9, rx = 19, ey = 14 + yoff;
+  int ly = 16 + yoff;
   if (eye_mode == 0) {
-    // white sclera 4x5, dark pupil 2x2 shifted by dirx
-    rect_filled(f, lx, ey, lx + 3, ey + 4, C_WHITE);
-    rect_filled(f, rx, ey, rx + 3, ey + 4, C_WHITE);
-    rect_filled(f, lx + 1 + dirx, ey + 1, lx + 2 + dirx, ey + 2, C_DARK);
-    rect_filled(f, rx + 1 + dirx, ey + 1, rx + 2 + dirx, ey + 2, C_DARK);
-    // tiny glint
-    put_px(f, lx + 1 + dirx, ey + 1, C_WHITE);
-    put_px(f, rx + 1 + dirx, ey + 1, C_WHITE);
+    put_px(f, 11 + dirx, ly, C_DARK);
+    put_px(f, 12 + dirx, ly, C_DARK);
+    put_px(f, 11 + dirx, ly + 1, C_DARK);
+    put_px(f, 12 + dirx, ly + 1, C_DARK);
+    put_px(f, 19 + dirx, ly, C_DARK);
+    put_px(f, 20 + dirx, ly, C_DARK);
+    put_px(f, 19 + dirx, ly + 1, C_DARK);
+    put_px(f, 20 + dirx, ly + 1, C_DARK);
   } else if (eye_mode == 1) {
-    // closed: gentle curved line
-    hline(f, lx, lx + 3, ey + 2, C_DARK);
-    hline(f, rx, rx + 3, ey + 2, C_DARK);
-  } else {  // happy ^_^
-    put_px(f, lx, ey + 3, C_DARK);
-    put_px(f, lx + 1, ey + 2, C_DARK);
-    put_px(f, lx + 2, ey + 2, C_DARK);
-    put_px(f, lx + 3, ey + 3, C_DARK);
-    put_px(f, rx, ey + 3, C_DARK);
-    put_px(f, rx + 1, ey + 2, C_DARK);
-    put_px(f, rx + 2, ey + 2, C_DARK);
-    put_px(f, rx + 3, ey + 3, C_DARK);
+    hline(f, 11, 12, ly + 1, C_DARK);
+    hline(f, 19, 20, ly + 1, C_DARK);
+  } else {
+    put_px(f, 11, ly + 1, C_DARK);
+    put_px(f, 12, ly, C_DARK);
+    put_px(f, 19, ly + 1, C_DARK);
+    put_px(f, 20, ly, C_DARK);
   }
 }
 
-// mouth_mode: 0 neutral, 1 smile, 2 frown, 3 small-o
+// mouth_mode: 0 none, 1 smile, 2 frown, 3 small-o
 static void draw_mouth(uint32_t* f, int yoff, int mouth_mode) {
-  int mx = 16, my = 22 + yoff;
+  int mx = 16, my = 21 + yoff;
   switch (mouth_mode) {
-    case 0: hline(f, mx - 1, mx + 1, my, C_DARK); break;
-    case 1:  // smile
-      put_px(f, mx - 2, my, C_DARK);
+    case 0: put_px(f, mx, my, C_DARK); break;  // tiny neutral dot
+    case 1:
+      put_px(f, mx - 1, my, C_DARK);
+      put_px(f, mx, my + 1, C_DARK);
+      put_px(f, mx + 1, my, C_DARK);
+      break;  // smile
+    case 2:
       put_px(f, mx - 1, my + 1, C_DARK);
-      put_px(f, mx, my + 1, C_DARK);
-      put_px(f, mx + 1, my + 1, C_DARK);
-      put_px(f, mx + 2, my, C_DARK);
-      break;
-    case 2:  // frown
-      put_px(f, mx - 2, my + 1, C_DARK);
-      put_px(f, mx - 1, my, C_DARK);
       put_px(f, mx, my, C_DARK);
-      put_px(f, mx + 1, my, C_DARK);
-      put_px(f, mx + 2, my + 1, C_DARK);
-      break;
-    case 3:  // small-o
-      put_px(f, mx - 1, my, C_DARK);
-      put_px(f, mx + 1, my, C_DARK);
-      put_px(f, mx, my + 1, C_DARK);
-      break;
+      put_px(f, mx + 1, my + 1, C_DARK);
+      break;  // frown
+    case 3:
+      put_px(f, mx, my, C_DARK);
+      put_px(f, mx - 1, my + 1, C_DARK);
+      put_px(f, mx + 1, my + 1, C_DARK);
+      break;  // o
   }
-}
-
-static void draw_blush(uint32_t* f, int yoff) {
-  put_px(f, 7, 20 + yoff, C_BLUSH);
-  put_px(f, 8, 20 + yoff, C_BLUSH);
-  put_px(f, 23, 20 + yoff, C_BLUSH);
-  put_px(f, 24, 20 + yoff, C_BLUSH);
 }
 
 static void draw_z(uint32_t* f, int frame) {
   int x = 22, y = 4 + (frame % 2);
-  hline(f, x, x + 3, y, C_Z);
-  put_px(f, x + 2, y + 1, C_Z);
-  put_px(f, x + 1, y + 2, C_Z);
-  hline(f, x, x + 3, y + 3, C_Z);
+  hline(f, x, x + 2, y, C_Z);
+  put_px(f, x + 1, y + 1, C_Z);
+  hline(f, x, x + 2, y + 2, C_Z);
 }
 
 static void draw_tear(uint32_t* f, int yoff) {
-  put_px(f, 23, 19 + yoff, C_TEAR);
-  put_px(f, 23, 20 + yoff, C_TEAR);
+  put_px(f, 21, 18 + yoff, C_TEAR);
+  put_px(f, 21, 19 + yoff, C_TEAR);
 }
 
 static sprite_sheet make_sheet(int frames) {
@@ -191,10 +145,9 @@ static uint32_t* frame_at(sprite_sheet* s, int i) {
 void skin_init_default(skin* sk) {
   init_colors();
   memset(sk, 0, sizeof(*sk));
-  // 20 frames
   sk->sheet = make_sheet(20);
 
-  // idle 0..3: gentle bob
+  // idle 0..3: gentle bob, neutral
   for (int i = 0; i < 4; i++) {
     uint32_t* f = frame_at(&sk->sheet, i);
     clear_frame(f);
@@ -211,7 +164,7 @@ void skin_init_default(skin* sk) {
     draw_eyes(f, 0, i == 0 ? 0 : 1, 0);
     draw_mouth(f, 0, 0);
   }
-  // sleep 6..9
+  // sleep 6..9: closed eyes + Z
   for (int i = 0; i < 4; i++) {
     uint32_t* f = frame_at(&sk->sheet, 6 + i);
     clear_frame(f);
@@ -221,7 +174,7 @@ void skin_init_default(skin* sk) {
     draw_mouth(f, yoff, 0);
     draw_z(f, i);
   }
-  // happy 10..13: bounce + smile + blush
+  // happy 10..13: bounce + smile
   for (int i = 0; i < 4; i++) {
     uint32_t* f = frame_at(&sk->sheet, 10 + i);
     clear_frame(f);
@@ -229,7 +182,6 @@ void skin_init_default(skin* sk) {
     draw_body(f, yoff, 0);
     draw_eyes(f, yoff, 2, 0);
     draw_mouth(f, yoff, 1);
-    draw_blush(f, yoff);
   }
   // sad 14..17: droop + frown + tear
   for (int i = 0; i < 4; i++) {
@@ -241,7 +193,7 @@ void skin_init_default(skin* sk) {
     draw_mouth(f, yoff, 2);
     if (i % 2 == 0) draw_tear(f, yoff);
   }
-  // observe 18..19: eyes look left then right
+  // observe 18..19: eyes look left/right
   for (int i = 0; i < 2; i++) {
     uint32_t* f = frame_at(&sk->sheet, 18 + i);
     clear_frame(f);
@@ -250,22 +202,16 @@ void skin_init_default(skin* sk) {
     draw_mouth(f, 0, 3);
   }
 
-  // default anim table
   static const int def[ANIM_COUNT][4] = {
-      {0, 1, 2, 3},          // idle
-      {4, 5, 4, 5},          // blink
-      {6, 7, 8, 9},          // sleep
-      {10, 11, 12, 13},      // happy
-      {14, 15, 16, 17},      // sad
-      {18, 19, 18, 19},      // observe
+      {0, 1, 2, 3}, {4, 5, 4, 5}, {6, 7, 8, 9},
+      {10, 11, 12, 13}, {14, 15, 16, 17}, {18, 19, 18, 19},
   };
   static const int def_fps[ANIM_COUNT] = {3, 5, 3, 8, 3, 4};
   static const int def_n[ANIM_COUNT] = {4, 4, 4, 4, 4, 4};
   for (int a = 0; a < ANIM_COUNT; a++) {
     sk->nframes[a] = def_n[a];
     sk->fps[a] = def_fps[a];
-    for (int j = 0; j < def_n[a]; j++)
-      sk->frames[a][j] = def[a][j];
+    for (int j = 0; j < def_n[a]; j++) sk->frames[a][j] = def[a][j];
   }
 }
 
@@ -302,9 +248,7 @@ void skin_set_anim(skin* sk, int anim, const int* frames, int n, int fps) {
   if (n > ANIM_MAX_FRAMES) n = ANIM_MAX_FRAMES;
   for (int i = 0; i < n; i++) {
     int fi = frames[i];
-    // clamp into range so a bad index never reads out of bounds
-    if (sk->sheet.frame_count > 0)
-      fi %= sk->sheet.frame_count;
+    if (sk->sheet.frame_count > 0) fi %= sk->sheet.frame_count;
     sk->frames[anim][i] = fi;
   }
   sk->nframes[anim] = n;

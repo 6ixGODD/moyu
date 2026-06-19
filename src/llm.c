@@ -10,9 +10,9 @@
 
 void llm_config_init(llm_config* c) {
   memset(c, 0, sizeof(*c));
-  c->base_url = moyu_strdup("https://api.deepseek.com/v1");
+  c->base_url = moyu_strdup("https://open.bigmodel.cn/api/paas/v4");
   c->api_key = moyu_strdup("");
-  c->model = moyu_strdup("deepseek-chat");
+  c->model = moyu_strdup("glm-4.7-flash");
   c->max_tokens = 256;
   c->temperature = 0.8f;
   c->json_mode = false;
@@ -152,10 +152,20 @@ llm_result llm_complete(llm_config* cfg,
   cJSON* first = cJSON_GetArrayItem(choices, 0);
   cJSON* message = cJSON_GetObjectItem(first, "message");
   cJSON* content = message ? cJSON_GetObjectItem(message, "content") : NULL;
-  if (content && cJSON_IsString(content)) {
+  if (content && cJSON_IsString(content) && content->valuestring[0]) {
     res.text = moyu_strdup(content->valuestring);
   } else {
-    res.error = moyu_strdup("no content in message");
+    // Reasoning models (e.g. GLM-4.7-flash) may emit the answer in
+    // reasoning_content when they run out of tokens before the final answer.
+    // Fall back to it rather than returning nothing.
+    cJSON* reasoning =
+        message ? cJSON_GetObjectItem(message, "reasoning_content") : NULL;
+    if (reasoning && cJSON_IsString(reasoning) && reasoning->valuestring[0]) {
+      res.text = moyu_strdup(reasoning->valuestring);
+      LOGW("LLM: empty content, used reasoning_content fallback");
+    } else {
+      res.error = moyu_strdup("no content in message");
+    }
   }
   cJSON_Delete(root);
   platform_http_resp_free(&r);
