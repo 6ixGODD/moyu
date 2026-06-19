@@ -2,6 +2,7 @@
 #include "context.h"
 #include "emotion.h"
 #include "event.h"
+#include "image.h"
 #include "llm.h"
 #include "log.h"
 #include "loop.h"
@@ -26,8 +27,7 @@
 
 #define WIN_W 160
 #define WIN_H 160
-#define PET_SCALE 3
-#define PET_SIZE (32 * PET_SCALE)  // 96
+#define PET_SIZE (32 * PET_SCALE)  // 96, matches loop.c
 
 static char* path_relative_to_exe(const char* name) {
   const char* dir = platform_exe_dir();
@@ -234,7 +234,7 @@ int main(int argc, char** argv)
   event_queue_init(&app.events, 64);
 
   // Render
-  app.sprites = procedural_build_all();
+  skin_init_default(&app.sk);
   app.render = render_new(WIN_W, WIN_H);
   app.current_anim = ANIM_IDLE;
   app.current_frame = 0;
@@ -320,9 +320,7 @@ int main(int argc, char** argv)
   if (app.say_text) moyu_free(app.say_text);
   if (app.L) lua_runtime_destroy(app.L);
   platform_window_destroy(app.win);
-  for (int i = 0; i < ANIM_COUNT; i++)
-    sprite_sheet_free(&app.sprites[i]);
-  moyu_free(app.sprites);
+  skin_free(&app.sk);
   render_free(&app.render);
   event_queue_free(&app.events);
   context_store_free(&app.ctx);

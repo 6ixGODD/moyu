@@ -215,7 +215,25 @@ void platform_window_set_pixels(platform_window* w,
                                 int hh) {
   if (!w || !rgba) return;
   if (ww != w->w || hh != w->h) return;
-  memcpy(w->bits, rgba, (size_t)ww * hh * 4);
+
+  // Convert engine format RGBA (R high, A low) -> premultiplied BGRA, which
+  // is what a 32-bit BI_RGB DIB stores and UpdateLayeredWindow/ULW_ALPHA
+  // expects (alpha in the high byte, channels premultiplied). Without this,
+  // opaque body pixels land as semi-transparent ghosts and R/B are swapped.
+  int n = ww * hh;
+  for (int i = 0; i < n; i++) {
+    uint32_t p = rgba[i];
+    uint8_t a = (uint8_t)(p & 0xff);
+    uint8_t r = (uint8_t)((p >> 24) & 0xff);
+    uint8_t g = (uint8_t)((p >> 16) & 0xff);
+    uint8_t b = (uint8_t)((p >> 8) & 0xff);
+    // Premultiply by alpha (no-op for a==0 or a==255, which is all we use).
+    r = (uint8_t)((r * a) / 255);
+    g = (uint8_t)((g * a) / 255);
+    b = (uint8_t)((b * a) / 255);
+    w->bits[i] = ((uint32_t)a << 24) | ((uint32_t)r << 16) |
+                 ((uint32_t)g << 8) | b;
+  }
 
   POINT zero = {0, 0};
   SIZE size = {w->w, w->h};

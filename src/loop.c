@@ -172,14 +172,17 @@ static void handle_internal_event(moyu_app* app, const internal_event* ev) {
 }
 
 static void update_animation(moyu_app* app, uint64_t now_ms) {
-  // Drive frame rate ~4 fps for sprite animation
-  int frame_period = 250;  // ms per frame
-  uint64_t elapsed = now_ms - app->last_tick_ms;
-  (void)elapsed;
-  int total_frames = app->sprites[app->current_anim].frame_count;
-  if (total_frames <= 0) return;
-  int frame = (int)((now_ms / frame_period) % total_frames);
-  app->current_frame = frame;
+  int anim = app->current_anim;
+  int n = app->sk.nframes[anim];
+  if (n <= 0) {
+    app->current_frame = 0;
+  } else {
+    int fps = app->sk.fps[anim];
+    if (fps < 1) fps = 4;
+    int period_ms = 1000 / fps;
+    if (period_ms < 1) period_ms = 1;
+    app->current_frame = (int)((now_ms / (uint64_t)period_ms) % (uint64_t)n);
+  }
 
   // Auto emotion-driven anim switches when nothing else is happening
   uint64_t idle = (now_ms - app->last_mouse_move_ms) / 1000;
@@ -191,16 +194,24 @@ static void update_animation(moyu_app* app, uint64_t now_ms) {
 
 static void render_frame(moyu_app* app) {
   render_clear(&app->render, 0);  // transparent
-  const int scale = 3;
-  const int pet_size = 32 * scale;
-  const int pet_dx = (app->win_w - pet_size) / 2;
-  const int pet_dy = app->win_h - pet_size - 4;
-  render_blit_frame_scaled(&app->render,
-                           &app->sprites[app->current_anim],
-                           app->current_frame,
-                           pet_dx,
-                           pet_dy,
-                           scale);
+  int fw = app->sk.sheet.frame_w;
+  int fh = app->sk.sheet.frame_h;
+  if (fw <= 0 || fh <= 0) {
+    render_present(&app->render, app->win);
+    return;
+  }
+  int scale = PET_SCALE;
+  int pet_w = fw * scale;
+  int pet_h = fh * scale;
+  int pet_dx = (app->win_w - pet_w) / 2;
+  int pet_dy = app->win_h - pet_h - 4;
+  int anim = app->current_anim;
+  int n = app->sk.nframes[anim];
+  int sheet_frame = (n > 0)
+                        ? app->sk.frames[anim][app->current_frame % n]
+                        : 0;
+  render_blit_frame_scaled(
+      &app->render, &app->sk.sheet, sheet_frame, pet_dx, pet_dy, scale);
   if (app->say_text && platform_now_ms() < app->say_until_ms) {
     render_bubble(&app->render, app->say_text, app->win_w / 2, pet_dy - 2);
   } else if (app->say_text) {
@@ -306,6 +317,9 @@ int moyu_app_run(moyu_app* app) {
   app->last_mouse_move_ms = platform_now_ms();
   app->last_tick_ms = 0;
   platform_window_show(app->win);
+  // Paint one frame immediately so the pet appears without waiting for the
+  // first 1s poll timeout.
+  render_frame(app);
   while (moyu_app_step(app)) {
     // single iteration; sleep happens via platform_poll_event timeout
   }

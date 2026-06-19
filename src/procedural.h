@@ -1,5 +1,5 @@
 #pragma once
 #include "sprite.h"
 
-// Build all default sprite sheets (caller frees each sheet + the array).
-sprite_sheet* procedural_build_all(void);
+// The builtin procedural skin is implemented in procedural.c via skin_init_default.
+// (No build_all anymore — the skin model replaced the per-anim sheet array.)

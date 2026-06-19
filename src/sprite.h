@@ -1,9 +1,10 @@
 #pragma once
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
 // Sprite sheet = horizontal strip of equal-sized frames.
-// Pixel format: 0xRRGGBBAA (RGBA8888, premultiplied not required; we use straight alpha).
+// Pixel format: 0xRRGGBBAA (RGBA8888, straight alpha).
 typedef struct {
   uint32_t* pixels;  // owned
   int frame_w;
@@ -28,5 +29,32 @@ typedef enum {
   ANIM_COUNT,
 } anim_id;
 
-// Procedurally build all default sprite sheets. Caller owns the array of ANIM_COUNT sheets.
-sprite_sheet* procedural_build_all(void);
+#define ANIM_MAX_FRAMES 32
+
+// A skin = one spritesheet + a per-animation list of frame indices + fps.
+// This is the entire "appearance" of the pet, and it is fully Lua-configurable:
+// the builtin procedural skin is just one possible skin; a BMP spritesheet
+// loaded from disk is another. Animations are defined by which sheet frames
+// they play and how fast — nothing else.
+typedef struct {
+  sprite_sheet sheet;
+  int frames[ANIM_COUNT][ANIM_MAX_FRAMES];  // sheet frame indices, in play order
+  int nframes[ANIM_COUNT];
+  int fps[ANIM_COUNT];
+} skin;
+
+void skin_init_default(skin* sk);  // builtin procedural skin + default anim table
+void skin_free(skin* sk);
+
+// Load a BMP spritesheet and split it into fw x fh frames (row-major).
+// On success, fills sk->sheet and leaves the anim table as-is (caller should
+// call skin_set_anim afterwards). Returns false on any error.
+bool skin_load_bmp(skin* sk, const char* path, int fw, int fh);
+
+// Define an animation's frame list and speed. frames may have up to
+// ANIM_MAX_FRAMES entries; n is clamped.
+void skin_set_anim(skin* sk, int anim, const int* frames, int n, int fps);
+
+// Name <-> id. Unknown name -> ANIM_IDLE.
+int anim_id_from_name(const char* name);
+const char* anim_name_from_id(int id);

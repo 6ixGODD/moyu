@@ -107,6 +107,78 @@ static int l_log(lua_State* L) {
   return 0;
 }
 
+// --- Appearance (skin) API -------------------------------------------------
+// The pet's look is fully plugin-defined from Lua:
+//   moyu.use_skin_builtin()                  -> reset to the procedural blob
+//   moyu.use_skin_bmp(path, fw, fh)          -> load a BMP spritesheet
+//   moyu.set_anim(name, frames, fps)         -> map an animation to sheet frames
+// Both skins share the same fixed animation names: idle/blink/sleep/happy/sad/
+// observe. A skin is just a sheet + a per-anim frame list; behaviour (when each
+// anim plays) stays in on_tick/on_click.
+
+static int l_use_skin_builtin(lua_State* L) {
+  moyu_app* app = get_app(L);
+  skin_free(&app->sk);
+  skin_init_default(&app->sk);
+  app->current_frame = 0;
+  LOGI("[lua] skin: builtin");
+  return 0;
+}
+
+static int l_use_skin_bmp(lua_State* L) {
+  const char* path = luaL_checkstring(L, 1);
+  int fw = (int)luaL_checkinteger(L, 2);
+  int fh = (int)luaL_checkinteger(L, 3);
+  moyu_app* app = get_app(L);
+  // Resolve relative to the exe dir so "skins/cat.bmp" works regardless of cwd.
+  char* full = NULL;
+  if (path[0] == '/' || (path[0] && path[1] == ':')) {
+    full = moyu_strdup(path);
+  } else {
+    const char* dir = platform_exe_dir();
+    size_t a = strlen(dir), b = strlen(path);
+    full = (char*)moyu_alloc(a + 1 + b + 1);
+    memcpy(full, dir, a);
+    full[a] = '\\';
+    memcpy(full + a + 1, path, b + 1);
+  }
+  sprite_sheet_free(&app->sk.sheet);
+  memset(&app->sk.sheet, 0, sizeof(app->sk.sheet));
+  bool ok = skin_load_bmp(&app->sk, full, fw, fh);
+  if (!ok) {
+    // never render nothing — fall back to the builtin blob
+    LOGW("[lua] skin BMP failed, falling back to builtin");
+    skin_free(&app->sk);
+    skin_init_default(&app->sk);
+  }
+  app->current_frame = 0;
+  moyu_free(full);
+  lua_pushboolean(L, ok);
+  return 1;
+}
+
+static int l_set_anim(lua_State* L) {
+  const char* name = luaL_checkstring(L, 1);
+  luaL_checktype(L, 2, LUA_TTABLE);
+  int fps = (int)luaL_optinteger(L, 3, 4);
+  moyu_app* app = get_app(L);
+  int id = anim_id_from_name(name);
+  int frames[ANIM_MAX_FRAMES];
+  int n = 0;
+  int len = (int)lua_rawlen(L, 2);
+  for (int i = 1; i <= len && n < ANIM_MAX_FRAMES; i++) {
+    lua_rawgeti(L, 2, i);
+    if (lua_isinteger(L, -1))
+      frames[n++] = (int)lua_tointeger(L, -1);
+    else if (lua_isnumber(L, -1))
+      frames[n++] = (int)lua_tonumber(L, -1);
+    lua_pop(L, 1);
+  }
+  skin_set_anim(&app->sk, id, frames, n, fps);
+  app->current_frame = 0;
+  return 0;
+}
+
 static void register_moyu_api(lua_State* L) {
   static const luaL_Reg funcs[] = {
       {"idle_seconds", l_idle_seconds},
@@ -118,6 +190,9 @@ static void register_moyu_api(lua_State* L) {
       {"anim", l_anim},
       {"llm", l_llm},
       {"log", l_log},
+      {"use_skin_builtin", l_use_skin_builtin},
+      {"use_skin_bmp", l_use_skin_bmp},
+      {"set_anim", l_set_anim},
       {NULL, NULL},
   };
   luaL_newlib(L, funcs);

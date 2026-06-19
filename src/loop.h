@@ -16,6 +16,12 @@ struct llm_config;
 struct llm_cache;
 struct tool_registry;
 
+// Integer scale applied to the skin's frame when blitting. The pet occupies
+// (skin.frame_w * PET_SCALE) x (skin.frame_h * PET_SCALE) px, bottom-centered
+// in the window. Bubbles render in the space above it. Bumped from 3 so the
+// default 32px skin is clearly visible (32*3 = 96px).
+#define PET_SCALE 3
+
 typedef struct moyu_app {
   // platform
   platform_window* win;
@@ -24,7 +30,7 @@ typedef struct moyu_app {
 
   // render
   render_ctx render;
-  sprite_sheet* sprites;  // ANIM_COUNT sheets (owned array)
+  skin sk;  // appearance: one spritesheet + per-anim frame tables (owned)
 
   // core state
   context_store ctx;
