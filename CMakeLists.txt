@@ -29,38 +29,31 @@ if(MSVC)
     target_compile_definitions(cjson_static PRIVATE _CRT_SECURE_NO_WARNINGS)
 endif()
 
-# ---------- MOYU ----------
-file(GLOB_RECURSE MOYU_SRC CONFIGURE_DEPENDS
-    src/main.c
-    src/util/*.c
-    src/platform/*.c
-    src/render/*.c
-    src/core/*.c
-    src/llm/*.c
-    src/tools/*.c
-    src/script/*.c
-)
+# ---------- MOYU (flat src/ layout) ----------
+file(GLOB MOYU_SRC CONFIGURE_DEPENDS src/*.c)
 
-add_executable(moyu WIN32 ${MOYU_SRC})
-
+# Exclude platform sources that don't apply to the current target.
 if(WIN32)
-    # .m files excluded by GLOB above; select proper platform source
-    set_property(SOURCE src/platform/platform_macos.m PROPERTY HEADER_FILE_ONLY ON)
-    if(NOT CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
-        list(REMOVE_ITEM MOYU_SRC src/platform/platform_linux.c)
-    endif()
+    list(FILTER MOYU_SRC EXCLUDE REGEX "platform_linux\\.c$")
+    list(FILTER MOYU_SRC EXCLUDE REGEX "platform_macos\\.m$")
+elseif(APPLE)
+    list(FILTER MOYU_SRC EXCLUDE REGEX "platform_linux\\.c$")
+    list(FILTER MOYU_SRC EXCLUDE REGEX "platform_win32\\.c$")
+    enable_language(OBJC)
+    set(MOYU_OBJC src/platform_macos.m)
+else()
+    list(FILTER MOYU_SRC EXCLUDE REGEX "platform_win32\\.c$")
+    list(FILTER MOYU_SRC EXCLUDE REGEX "platform_macos\\.m$")
 endif()
 
-target_include_directories(moyu PRIVATE
-    src
-    src/util
-    src/platform
-    src/render
-    src/core
-    src/llm
-    src/tools
-    src/script
-)
+if(APPLE)
+    add_executable(moyu WIN32 ${MOYU_SRC} ${MOYU_OBJC})
+    set_target_properties(moyu PROPERTIES LINK_FLAGS "-ObjC")
+else()
+    add_executable(moyu WIN32 ${MOYU_SRC})
+endif()
+
+target_include_directories(moyu PRIVATE src)
 
 target_link_libraries(moyu PRIVATE lua_static cjson_static)
 
@@ -78,7 +71,6 @@ if(APPLE)
     find_library(APPKIT AppKit REQUIRED)
     find_library(FOUNDATION Foundation REQUIRED)
     target_link_libraries(moyu PRIVATE ${APPKIT} ${FOUNDATION})
-    set_target_properties(moyu PROPERTIES LINK_FLAGS "-ObjC")
 endif()
 
 if(UNIX AND NOT APPLE)

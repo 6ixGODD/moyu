@@ -14,6 +14,7 @@ TODO.md
 *.lib
 *.exp
 *.dll
+moyu.log
 
 .vs/
 .idea/
@@ -22,5 +23,11 @@ TODO.md
 
 CMakeUserPresets.json
 compile_commands.json
+
+# Local config with real API key — commit config.example.json instead.
+assets/config.json
+
+# Claude Code / IDE session config (user-specific)
+.claude/
 
 # Lua & cJSON vendored sources are tracked; do not ignore third_party/

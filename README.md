@@ -1,100 +1,225 @@
-# MOYU 桌宠 Agent Runtime v0.1
+# MOYU — a pixel desktop pet agent runtime in C + Lua
 
-一个用 C + Lua 实现的 <10MB 像素桌宠 agent runtime。详见 `TODO.md`。
+<p align="center">
+  <img alt="size" src="https://img.shields.io/badge/binary-~600KB-blue">
+  <img alt="lang" src="https://img.shields.io/badge/C11-flat%20src-yellow">
+  <img alt="lua" src="https://img.shields.io/badge/Lua-5.4%20sandbox-green">
+  <img alt="deps" src="https://img.shields.io/badge/deps-0%20external-success">
+  <img alt="platform" src="https://img.shields.io/badge/platform-Windows%20%E2%9C%93%20%7C%20Linux%20macOS%20stub-lightgrey">
+</p>
 
-## 构建
+> 摸鱼 (mō yú) — verb. To slack off at work. To idle while pretending to be busy. A national pastime.
 
-仓库内置 Lua 5.4 与 cJSON 源码，无需任何外部依赖。
+MOYU is a tiny pixel-art desktop companion that lives in your screen's
+bottom-right corner and occasionally judges you for being on the
+computer again. It is also a deliberately minimal **agent runtime** — a
+sandboxed Lua hook system riding on top of a C core that renders one
+transparent window, polls events at 1 Hz, and talks to an OpenAI-compatible
+LLM endpoint only when something interesting happens.
 
-### Windows（首选，使用 clang 直接编译）
+**Design constraints (taken literally):**
+
+| Constraint | How |
+|---|---|
+| <10 MB binary | ~600 KB. Lua 5.4 + cJSON linked statically. Sprites generated in code. |
+| ≤1 Hz tick, idle CPU ≈ 0 | Single thread, blocking poll with 1000 ms timeout. No busy loops. |
+| 90% rule-based, 10% LLM | All behaviour branches in `scripts/default.lua`. LLM is a reflective narrator, not an autonomous agent. |
+| Pixel-level rendering | Software RGBA8888 rasterizer → `UpdateLayeredWindow`. No GPU, no WebView, no SVG. |
+| UI works without network | LLM disabled gracefully on empty `api_key`. Falls back to pure rule behaviour. |
+| Only platform code is abstracted | One file, `platform.h`. Everything else is free functions on plain structs. |
+
+---
+
+## What it looks like
+
+A 96×96 pixel creature sits in a 160×160 transparent, topmost, click-through
+window. The transparent area passes mouse events to the desktop; only the
+pet's body captures clicks.
+
+| Animation | Trigger |
+|---|---|
+| `idle` | default — gentle breathing |
+| `blink` | random short blink |
+| `observe` | cursor within 60 px |
+| `happy` | click, or positive valence |
+| `sad` | negative valence |
+| `sleep` | 2+ minutes idle |
+
+Speech bubbles support full CJK (rasterized via `GetGlyphOutlineW`) — your
+pet can judge you in any language.
+
+---
+
+## Build
+
+### Windows (clang-cl + MSVC linker)
+
+```bat
+build.bat
+```
+
+Output: `build/moyu.exe` (~600 KB). Assets and scripts are copied next to
+the binary automatically.
+
+Requirements: Visual Studio 2022 BuildTools or Community (for `vcvarsall.bat`
++ MSVC linker) and `clang-cl` on PATH.
+
+### Cross-platform (clang, no MSVC)
 
 ```bash
 ./build.sh
 ```
 
-产物：`build/moyu.exe`。需要 `clang` 在 PATH 中（已通过测试：clang 21 + Win10/11）。
-也可以用 CMake + MSVC：
+Detects host. On Windows produces the same `.exe`; on Linux/macOS produces
+a stub binary that compiles cleanly but prints "not implemented" at runtime.
 
-```bat
+### CMake
+
+```bash
 cmake -B build -S .
 cmake --build build --config Release
 ```
 
-### Linux / macOS
+---
 
-平台抽象层提供了 stub，编译可过，运行时会报 "not implemented"。
-完整实现 X11/libcurl 或 Cocoa/NSURLSession 留作后续工作。
+## Configure
 
-## 配置
-
-可执行文件同目录下需要 `assets/config.json` 与 `scripts/default.lua`。
-`build.sh` 与 CMake 都会自动把仓库内的 `assets/` 与 `scripts/` 复制到产物旁。
+Edit `assets/config.json`:
 
 ```json
 {
   "llm": {
     "base_url": "https://api.deepseek.com/v1",
-    "api_key": "",                   // 留空 → 退化纯 rule-based
-    "model": "deepseek-chat",
+    "api_key": "sk-...",
+    "model": "deepseek-v4-flash",
     "max_tokens": 256,
     "temperature": 0.8,
     "daily_limit": 50
   },
   "personality": { "mood_bias": 0.0, "sarcasm": 0.3, "curiosity": 0.6, "patience": 0.7 },
   "rules": { "idle_poke_seconds": 300, "rare_event_chance": 0.02 },
-  "mcp_servers": [                   // 可选，动态加载 MCP 工具
-    { "url": "http://127.0.0.1:8080/mcp", "api_key": "" }
-  ]
+  "mcp_servers": []
 }
 ```
 
-## 运行
+Leave `api_key` empty → MOYU runs rule-only, no network calls. The LLM is
+gated behind a daily-limit ring (default 50 calls / 24 h) and an LRU cache
+keyed on the rolling context hash, so identical recent histories don't
+re-hit the API.
 
-```bash
-./build/moyu.exe
+---
+
+## Run
+
+```bat
+build\moyu.exe
 ```
 
-桌面右下角出现一只蓝色像素小生物。行为：
+The pet appears in the bottom-right of your primary screen. Logs go to
+`moyu.log` next to the executable (and to `stderr` if launched from a
+console).
 
-- 鼠标靠近 → observe（眼睛跟随）
-- 长时间无操作 → sleep + "Z"
-- 空闲超过 5 分钟 → 5%/秒概率弹吐槽
-- 点击 → happy 表情
-- 配置了 LLM api_key → 极低概率自发生成一句话（点缀层）
-- 未配置 LLM → 完全 rule-based，不崩溃
+---
 
-## 架构
+## Make it yours
 
-详见 `TODO.md`。简而言之：
-
-- **唯一的抽象层**：`src/platform/platform.h` — 窗口、事件、HTTP、时间、文件系统
-  - Win32 用 `CreateWindowExW(WS_EX_LAYERED)` + `UpdateLayeredWindow` + `WinHTTP`
-  - Linux/macOS stub
-- **其余模块直接实现**，无多余抽象：
-  - `core/` — context ring buffer、event queue、personality、emotion、loop
-  - `render/` — 软件光栅化 + 程序化生成的 32×32 像素 sprite
-  - `llm/` — OpenAI-compatible completions + LRU cache
-  - `tools/` — 轻量调度器 + MCP HTTP 客户端
-  - `script/` — Lua 5.4 沙箱（禁用 io/os/package/loadfile/require）
-
-## Lua API（沙箱内可用）
+Behaviour lives in `scripts/default.lua`. Replace the file — that is the
+entire customisation story. The Lua sandbox strips `io`/`os`/`package`/
+`loadfile`/`require`/`load` and exposes a ~10-function API:
 
 ```lua
-moyu.idle_seconds()   -> number
-moyu.mouse_distance() -> number
-moyu.mood()           -> valence, arousal
-moyu.personality()    -> mood_bias, sarcasm, curiosity, patience
-moyu.emit(name, payload?)
-moyu.say(text, duration_ms?)
-moyu.anim(name)       -- idle|blink|sleep|happy|sad|observe
-moyu.llm(prompt)      -> string|nil
-moyu.log(msg)
+function on_tick(idle_s, mouse_dist, valence, arousal)
+  if mouse_dist < 60 then
+    moyu.anim("observe")
+  elseif idle_s > 120 then
+    moyu.anim("sleep")
+  end
 
--- Hooks (optional):
-function on_tick(idle_s, mouse_dist, valence, arousal) end
-function on_click(button) end
+  if idle_s > 300 and math.random() < 0.05 then
+    moyu.say("又摸鱼？", 3000)
+  end
+
+  -- Reflective LLM: rare, gated by curiosity, throttled by runtime
+  if idle_s > 600 and math.random() < 0.002 then
+    local _, _, curiosity, _ = moyu.personality()
+    if curiosity > 0.4 then
+      local reply = moyu.llm("One short idle thought.")
+      if reply then moyu.say(reply, 4000) end
+    end
+  end
+end
 ```
 
-## 体积
+Full API reference: [docs/lua_api.md](docs/lua_api.md).
 
-`moyu.exe` 约 1-2 MB（含 Lua + cJSON），远低于 10MB 上限。Sprite 程序化生成，无外部资源文件。
+---
+
+## Architecture in one paragraph
+
+One thread. One `moyu_app` struct on the stack of `main`. A ring buffer
+of `context_node`s is the agent's only memory; each user interaction,
+tool call, or LLM reflection pushes one node. On every tick, the loop
+polls the platform, drains an internal event queue, calls the Lua
+`on_tick` hook, and blits a procedurally-generated sprite frame. LLM
+calls are synchronous (the pet visibly pauses to think) and feed back
+into the context store as `CTX_REFLECTION` nodes. Everything
+platform-specific — window, events, HTTP, time, filesystem, CJK glyph
+rasterization — lives behind `platform.h`. Everything else is free
+functions on plain structs. No frameworks, no interfaces, no
+factories.
+
+More: [docs/architecture.md](docs/architecture.md) ·
+[docs/design.md](docs/design.md) ·
+[docs/context.md](docs/context.md) ·
+[docs/mcp.md](docs/mcp.md)
+
+---
+
+## Project layout
+
+```
+src/
+  main.c              WinMain entry + assembly
+  loop.{h,c}          1 Hz event-driven main loop
+  context.{h,c}       Rolling ring buffer — the agent's memory
+  event.{h,c}         Internal event queue
+  persona.{h,c}       Personality (4 floats, persisted)
+  emotion.{h,c}       Valence/arousal, personality-biased random walk
+  llm.{h,c}           OpenAI-compatible completion + LRU cache
+  tool.{h,c}          Tool registry: name → C function
+  mcp.{h,c}           MCP client over HTTP (dynamic tool loading)
+  render.{h,c}        RGBA8888 backbuffer + alpha blit
+  sprite.{h,c}        Sprite sheet struct + frame stepping
+  procedural.{h,c}    Code-generated 32×32 sprites
+  font.{h,c}          5×7 ASCII + CJK via platform glyph rasterizer
+  lua_rt.{h,c}        Lua 5.4 sandbox + moyu.* API + hooks
+  platform.h          The ONLY abstraction
+  platform_win32.c    Full Win32: layered window, WinHTTP, GGO glyph
+  platform_linux.c    X11 stub (compiles)
+  platform_macos.m    Cocoa stub (compiles)
+  log.{h,c}  mem.{h,c}  hash.{h,c}
+third_party/
+  lua/                Lua 5.4.7 vendored
+  cjson/              cJSON 1.7.18 vendored
+assets/config.json
+scripts/default.lua
+docs/
+```
+
+---
+
+## Roadmap
+
+- [ ] Linux X11 + libcurl platform implementation
+- [ ] macOS Cocoa + NSURLSession platform implementation
+- [ ] MCP stdio transport (currently HTTP only)
+- [ ] Persistence of personality drift and say history across restarts
+- [ ] `moyu.tool(name, args)` Lua binding so scripts can call MCP tools directly
+- [ ] Replace procedural sprites with optional BMP loading
+
+---
+
+## License
+
+MIT. See [LICENSE](LICENSE). Lua 5.4 (MIT) and cJSON (MIT) are vendored
+under `third_party/` and retain their original licenses.

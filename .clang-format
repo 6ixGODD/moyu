@@ -1,0 +1,51 @@
+---
+# MOYU C code style — Google-based, tweaked for pure C.
+BasedOnStyle: Google
+Language: Cpp
+
+IndentWidth: 2
+ColumnLimit: 80
+TabWidth: 2
+UseTab: Never
+
+# Pointers hug the type: char* p, not char *p
+PointerAlignment: Left
+
+# Braces on same line (K&R / 1TBS)
+BreakBeforeBraces: Attach
+
+# Keep empty short functions on one line, but not multi-statement ones
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine: false
+AllowShortBlocksOnASingleLine: Empty
+AllowShortCaseLabelsOnASingleLine: true
+
+# Don't align assignments/declarations in columns (keeps diffs clean)
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+AlignTrailingComments: true
+AlignOperands: true
+
+# No space after cast: (int)x not (int) x
+SpaceAfterCStyleCast: false
+SpaceBeforeParens: ControlStatements
+
+# One include block: local "" first, then system <>
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex: '^"'
+    Priority: 1
+  - Regex: '^<.*\.h>'
+    Priority: 2
+  - Regex: '^<'
+    Priority: 3
+SortIncludes: CaseInsensitive
+
+# Keep parameter packs / long arg lists readable
+BinPackParameters: false
+BinPackArguments: false
+
+# Misc
+DerivePointerAlignment: false
+ReflowComments: false
