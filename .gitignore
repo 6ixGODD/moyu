@@ -1,0 +1,26 @@
+AGENTS.md
+CLAUDE.md
+TODO.md
+
+/build/
+/build-*/
+/out/
+*.exe
+*.pdb
+*.ilk
+*.obj
+*.o
+*.a
+*.lib
+*.exp
+*.dll
+
+.vs/
+.idea/
+.cache/
+*.user
+
+CMakeUserPresets.json
+compile_commands.json
+
+# Lua & cJSON vendored sources are tracked; do not ignore third_party/

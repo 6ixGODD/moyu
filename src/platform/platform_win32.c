@@ -1,0 +1,487 @@
+#include "platform.h"
+#include "../util/log.h"
+#include "../util/mem.h"
+
+#define WIN32_LEAN_AND_MEAN
+#define _WIN32_WINNT 0x0601
+#include <windows.h>
+#include <winhttp.h>
+#include <shellapi.h>
+#include <windowsx.h>
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+#pragma comment(lib, "winhttp.lib")
+#pragma comment(lib, "user32.lib")
+#pragma comment(lib, "gdi32.lib")
+#pragma comment(lib, "shell32.lib")
+
+// ---------- Time ----------
+uint64_t platform_now_ms(void) {
+    static LARGE_INTEGER freq = {0};
+    if (freq.QuadPart == 0) QueryPerformanceFrequency(&freq);
+    LARGE_INTEGER c;
+    QueryPerformanceCounter(&c);
+    return (uint64_t)(c.QuadPart * 1000ULL / freq.QuadPart);
+}
+
+void platform_sleep_ms(uint32_t ms) { Sleep(ms); }
+
+// ---------- Filesystem ----------
+static char g_exe_dir[MAX_PATH] = {0};
+const char* platform_exe_dir(void) {
+    if (g_exe_dir[0]) return g_exe_dir;
+    DWORD n = GetModuleFileNameW(NULL, (wchar_t*)g_exe_dir, MAX_PATH);
+    (void)n;
+    // convert wide to narrow in place — cheap; we stored wide. Do it properly:
+    wchar_t wpath[MAX_PATH];
+    GetModuleFileNameW(NULL, wpath, MAX_PATH);
+    WideCharToMultiByte(CP_UTF8, 0, wpath, -1, g_exe_dir, MAX_PATH, NULL, NULL);
+    char* slash = strrchr(g_exe_dir, '\\');
+    if (slash) *slash = 0;
+    return g_exe_dir;
+}
+
+char* platform_join_path(const char* dir, const char* name) {
+    size_t a = strlen(dir), b = strlen(name);
+    char* p = (char*)moyu_alloc(a + 1 + b + 1);
+    memcpy(p, dir, a);
+    p[a] = '\\';
+    memcpy(p + a + 1, name, b + 1);
+    return p;
+}
+
+char* platform_read_file(const char* path, size_t* out_len) {
+    FILE* f = NULL;
+    if (fopen_s(&f, path, "rb") != 0 || !f) return NULL;
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (sz < 0) { fclose(f); return NULL; }
+    char* buf = (char*)moyu_alloc((size_t)sz + 1);
+    size_t rd = fread(buf, 1, (size_t)sz, f);
+    fclose(f);
+    buf[rd] = 0;
+    if (out_len) *out_len = rd;
+    return buf;
+}
+
+bool platform_write_file(const char* path, const void* data, size_t len) {
+    FILE* f = NULL;
+    if (fopen_s(&f, path, "wb") != 0 || !f) return false;
+    size_t wr = fwrite(data, 1, len, f);
+    fclose(f);
+    return wr == len;
+}
+
+void platform_get_cursor_pos(int* x, int* y) {
+    POINT p;
+    GetCursorPos(&p);
+    if (x) *x = p.x;
+    if (y) *y = p.y;
+}
+
+// ---------- Window ----------
+struct platform_window {
+    HWND hwnd;
+    HDC  mem_dc;
+    HBITMAP dib;
+    uint32_t* bits;
+    int w, h;
+    bool click_through;
+    int  last_hit_x, last_hit_y;
+    bool hit_valid;
+    int  hit_alpha;  // alpha value at last hit-test point
+    // Clickable sub-rect (window-relative). Default = whole window.
+    bool has_clickable;
+    int  cx, cy, cw, ch;
+};
+
+static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
+    platform_window* pw = (platform_window*)GetWindowLongPtrW(h, GWLP_USERDATA);
+    switch (msg) {
+        case WM_NCHITTEST: {
+            if (!pw) break;
+            POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+            ScreenToClient(h, &pt);
+            if (pt.x < 0 || pt.y < 0 || pt.x >= pw->w || pt.y >= pw->h)
+                return HTTRANSPARENT;
+            // If a clickable rect is set, anything outside it passes through.
+            if (pw->has_clickable) {
+                if (pt.x < pw->cx || pt.y < pw->cy ||
+                    pt.x >= pw->cx + pw->cw || pt.y >= pw->cy + pw->ch)
+                    return HTTRANSPARENT;
+            }
+            uint32_t px = pw->bits[pt.y * pw->w + pt.x];
+            int alpha = (px >> 24) & 0xff;
+            if (alpha < 16) return HTTRANSPARENT;
+            return HTCLIENT;
+        }
+        case WM_DESTROY:
+            PostQuitMessage(0);
+            return 0;
+        case WM_QUIT:
+            break;
+    }
+    return DefWindowProcW(h, msg, wp, lp);
+}
+
+static const wchar_t* WCLASS = L"moyu_pet_window";
+
+static void register_class(void) {
+    static bool done = false;
+    if (done) return;
+    WNDCLASSEXW wc = {0};
+    wc.cbSize = sizeof(wc);
+    wc.lpfnWndProc = wnd_proc;
+    wc.hInstance = GetModuleHandleW(NULL);
+    wc.lpszClassName = WCLASS;
+    RegisterClassExW(&wc);
+    done = true;
+}
+
+platform_window* platform_window_create(int w, int h, int x, int y,
+                                         bool transparent, bool topmost,
+                                         bool click_through) {
+    register_class();
+    platform_window* pw = (platform_window*)moyu_alloc(sizeof(*pw));
+    memset(pw, 0, sizeof(*pw));
+    pw->w = w; pw->h = h;
+    pw->click_through = click_through;
+
+    DWORD ex = WS_EX_LAYERED | WS_EX_TOOLWINDOW;
+    if (topmost) ex |= WS_EX_TOPMOST;
+    if (click_through) ex |= WS_EX_TRANSPARENT;
+    (void)transparent;
+
+    pw->hwnd = CreateWindowExW(ex, WCLASS, L"moyu",
+                               WS_POPUP,
+                               x, y, w, h,
+                               NULL, NULL, GetModuleHandleW(NULL), NULL);
+    if (!pw->hwnd) {
+        LOGE("CreateWindowExW failed: %lu", GetLastError());
+        moyu_free(pw);
+        return NULL;
+    }
+    SetWindowLongPtrW(pw->hwnd, GWLP_USERDATA, (LONG_PTR)pw);
+
+    // 32-bit DIB section for alpha-blended blit
+    BITMAPINFO bi = {0};
+    bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bi.bmiHeader.biWidth = w;
+    bi.bmiHeader.biHeight = -h;   // top-down
+    bi.bmiHeader.biPlanes = 1;
+    bi.bmiHeader.biBitCount = 32;
+    bi.bmiHeader.biCompression = BI_RGB;
+    HDC screen_dc = GetDC(NULL);
+    pw->dib = CreateDIBSection(screen_dc, &bi, DIB_RGB_COLORS, (void**)&pw->bits, NULL, 0);
+    pw->mem_dc = CreateCompatibleDC(screen_dc);
+    SelectObject(pw->mem_dc, pw->dib);
+    ReleaseDC(NULL, screen_dc);
+    // Start fully transparent
+    memset(pw->bits, 0, (size_t)w * h * 4);
+
+    return pw;
+}
+
+void platform_window_destroy(platform_window* w) {
+    if (!w) return;
+    if (w->mem_dc) DeleteDC(w->mem_dc);
+    if (w->dib)  DeleteObject(w->dib);
+    if (w->hwnd) DestroyWindow(w->hwnd);
+    moyu_free(w);
+}
+
+void platform_window_set_pixels(platform_window* w, const uint32_t* rgba, int ww, int hh) {
+    if (!w || !rgba) return;
+    if (ww != w->w || hh != w->h) return;
+    memcpy(w->bits, rgba, (size_t)ww * hh * 4);
+
+    POINT zero = {0, 0};
+    SIZE  size = {w->w, w->h};
+    BLENDFUNCTION bf = {0};
+    bf.BlendOp = AC_SRC_OVER;
+    bf.SourceConstantAlpha = 255;
+    bf.AlphaFormat = AC_SRC_ALPHA;
+    POINT pos = {0, 0};
+    RECT rc; GetWindowRect(w->hwnd, &rc);
+    pos.x = rc.left; pos.y = rc.top;
+    UpdateLayeredWindow(w->hwnd, NULL, &pos, &size, w->mem_dc, &zero, 0, &bf, ULW_ALPHA);
+}
+
+void platform_window_move(platform_window* w, int x, int y) {
+    if (!w) return;
+    SetWindowPos(w->hwnd, NULL, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+void platform_window_get_pos(platform_window* w, int* x, int* y) {
+    if (!w) return;
+    RECT rc; GetWindowRect(w->hwnd, &rc);
+    if (x) *x = rc.left;
+    if (y) *y = rc.top;
+}
+
+void platform_window_show(platform_window* w) {
+    if (!w) return;
+    ShowWindow(w->hwnd, SW_SHOWNOACTIVATE);
+}
+
+void platform_window_hide(platform_window* w) {
+    if (!w) return;
+    ShowWindow(w->hwnd, SW_HIDE);
+}
+
+void platform_window_set_clickable(platform_window* w, int x, int y, int w_, int h_) {
+    if (!w) return;
+    w->has_clickable = true;
+    w->cx = x; w->cy = y; w->cw = w_; w->ch = h_;
+}
+
+// ---------- Events ----------
+bool platform_poll_event(platform_window* w, platform_event* out, int timeout_ms) {
+    if (!w || !out) return false;
+    memset(out, 0, sizeof(*out));
+    out->ts_ms = platform_now_ms();
+
+    // First, drain any already-queued messages.
+    MSG msg;
+    if (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) {
+        // TranslateMessage(&msg);  // we don't care about WM_CHAR
+        DispatchMessageW(&msg);
+        switch (msg.message) {
+            case WM_QUIT:
+                out->type = PE_QUIT;
+                return true;
+            case WM_MOUSEMOVE: {
+                POINT pt = { GET_X_LPARAM(msg.lParam), GET_Y_LPARAM(msg.lParam) };
+                out->type = PE_MOUSE_MOVE;
+                out->x = pt.x; out->y = pt.y;
+                return true;
+            }
+            case WM_LBUTTONDOWN:
+                out->type = PE_MOUSE_DOWN; out->button = 0;
+                out->x = GET_X_LPARAM(msg.lParam); out->y = GET_Y_LPARAM(msg.lParam);
+                return true;
+            case WM_RBUTTONDOWN:
+                out->type = PE_MOUSE_DOWN; out->button = 1;
+                out->x = GET_X_LPARAM(msg.lParam); out->y = GET_Y_LPARAM(msg.lParam);
+                return true;
+            case WM_LBUTTONUP:
+                out->type = PE_MOUSE_UP; out->button = 0;
+                out->x = GET_X_LPARAM(msg.lParam); out->y = GET_Y_LPARAM(msg.lParam);
+                return true;
+            case WM_RBUTTONUP:
+                out->type = PE_MOUSE_UP; out->button = 1;
+                out->x = GET_X_LPARAM(msg.lParam); out->y = GET_Y_LPARAM(msg.lParam);
+                return true;
+            default:
+                // Unknown message dispatched; treat as no-op.
+                return false;
+        }
+    }
+
+    if (timeout_ms == 0) return false;
+    // Wait for a message or timeout.
+    DWORD res = MsgWaitForMultipleObjectsEx(0, NULL, timeout_ms < 0 ? INFINITE : (DWORD)timeout_ms,
+                                            QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+    (void)res;
+    return false;
+}
+
+// ---------- HTTP via WinHTTP ----------
+static void split_url(const char* url, wchar_t* scheme, int scheme_cch,
+                      wchar_t* host, int host_cch, wchar_t* path, int path_cch,
+                      INTERNET_PORT* port, bool* is_https) {
+    // url like https://host[:port]/path
+    *is_https = true;
+    *port = INTERNET_DEFAULT_HTTPS_PORT;
+    const char* p = url;
+    if (strncmp(p, "https://", 8) == 0) { *is_https = true; *port = INTERNET_DEFAULT_HTTPS_PORT; p += 8; }
+    else if (strncmp(p, "http://", 7) == 0) { *is_https = false; *port = INTERNET_DEFAULT_HTTP_PORT; p += 7; }
+    const char* slash = strchr(p, '/');
+    const char* colon = strchr(p, ':');
+    const char* host_end = slash ? slash : (p + strlen(p));
+    if (colon && colon < host_end) {
+        MultiByteToWideChar(CP_UTF8, 0, p, (int)(colon - p), host, host_cch);
+        host[colon - p] = 0;
+        *port = (INTERNET_PORT)atoi(colon + 1);
+    } else {
+        MultiByteToWideChar(CP_UTF8, 0, p, (int)(host_end - p), host, host_cch);
+        host[host_end - p] = 0;
+    }
+    if (slash) {
+        MultiByteToWideChar(CP_UTF8, 0, slash, -1, path, path_cch);
+    } else {
+        path[0] = L'/'; path[1] = 0;
+    }
+    if (scheme && scheme_cch > 0) scheme[0] = 0;
+}
+
+platform_http_resp platform_http_post_json(const char* url,
+                                           const char* auth_bearer,
+                                           const char* json_body,
+                                           int timeout_ms) {
+    platform_http_resp r = {0};
+    if (!url || !json_body) {
+        r.err = moyu_strdup("null url or body");
+        return r;
+    }
+    LOGI("HTTP POST %s (body %zu bytes)", url, strlen(json_body));
+    wchar_t host[256], path[1024];
+    INTERNET_PORT port;
+    bool is_https;
+    split_url(url, NULL, 0, host, 256, path, 1024, &port, &is_https);
+
+    HINTERNET hsession = WinHttpOpen(L"moyu/0.1",
+        WINHTTP_ACCESS_TYPE_NO_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!hsession) {
+        char buf[256];
+        snprintf(buf, sizeof(buf), "WinHttpOpen err=%lu", GetLastError());
+        LOGE("%s", buf);
+        r.err = moyu_strdup(buf);
+        return r;
+    }
+    WinHttpSetTimeouts(hsession, 5000, 10000, 30000, timeout_ms > 0 ? timeout_ms : 30000);
+
+    HINTERNET hconn = WinHttpConnect(hsession, host, port, 0);
+    if (!hconn) {
+        char buf[256];
+        snprintf(buf, sizeof(buf), "WinHttpConnect err=%lu", GetLastError());
+        LOGE("%s", buf);
+        r.err = moyu_strdup(buf);
+        WinHttpCloseHandle(hsession);
+        return r;
+    }
+
+    DWORD flags = WINHTTP_FLAG_SECURE;
+    if (!is_https) flags = 0;
+    HINTERNET hreq = WinHttpOpenRequest(hconn, L"POST", path,
+                                        NULL, WINHTTP_NO_REFERER,
+                                        WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
+    if (!hreq) {
+        char buf[256];
+        snprintf(buf, sizeof(buf), "WinHttpOpenRequest err=%lu", GetLastError());
+        LOGE("%s", buf);
+        r.err = moyu_strdup(buf);
+        WinHttpCloseHandle(hconn); WinHttpCloseHandle(hsession);
+        return r;
+    }
+
+    wchar_t auth_hdr[512] = L"Authorization: Bearer ";
+    {
+        int n = (int)wcslen(auth_hdr);
+        MultiByteToWideChar(CP_UTF8, 0, auth_bearer ? auth_bearer : "", -1,
+                            auth_hdr + n, (int)(512 - n));
+    }
+    WinHttpAddRequestHeaders(hreq, auth_hdr, (DWORD)-1,
+                             WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
+    const wchar_t* ctype = L"Content-Type: application/json; charset=utf-8";
+    WinHttpAddRequestHeaders(hreq, ctype, (DWORD)-1,
+                             WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
+
+    size_t body_len = strlen(json_body);
+    BOOL ok = WinHttpSendRequest(hreq, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+                                 (LPVOID)json_body, (DWORD)body_len, (DWORD)body_len, 0);
+    if (!ok) {
+        char buf[256];
+        snprintf(buf, sizeof(buf), "WinHttpSendRequest err=%lu", GetLastError());
+        LOGE("%s", buf);
+        r.err = moyu_strdup(buf);
+        WinHttpCloseHandle(hreq); WinHttpCloseHandle(hconn); WinHttpCloseHandle(hsession);
+        return r;
+    }
+    if (!WinHttpReceiveResponse(hreq, NULL)) {
+        char buf[256];
+        snprintf(buf, sizeof(buf), "WinHttpReceiveResponse err=%lu", GetLastError());
+        LOGE("%s", buf);
+        r.err = moyu_strdup(buf);
+        WinHttpCloseHandle(hreq); WinHttpCloseHandle(hconn); WinHttpCloseHandle(hsession);
+        return r;
+    }
+
+    // Status code
+    DWORD status = 0, size = sizeof(status);
+    WinHttpQueryHeaders(hreq, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                        WINHTTP_HEADER_NAME_BY_INDEX, &status, &size, WINHTTP_NO_HEADER_INDEX);
+    r.status = (int)status;
+
+    // Body
+    size_t total = 0, cap = 8192;
+    char* body = (char*)moyu_alloc(cap);
+    DWORD avail = 0;
+    while (WinHttpQueryDataAvailable(hreq, &avail) && avail > 0) {
+        if (total + avail + 1 > cap) {
+            while (total + avail + 1 > cap) cap *= 2;
+            body = (char*)moyu_realloc(body, cap);
+        }
+        DWORD rd = 0;
+        if (!WinHttpReadData(hreq, body + total, avail, &rd) || rd == 0) break;
+        total += rd;
+    }
+    body[total] = 0;
+    r.body = body; r.body_len = total;
+
+    WinHttpCloseHandle(hreq); WinHttpCloseHandle(hconn); WinHttpCloseHandle(hsession);
+    return r;
+}
+
+void platform_http_resp_free(platform_http_resp* r) {
+    if (!r) return;
+    if (r->body) { moyu_free(r->body); r->body = NULL; }
+    if (r->err)  { moyu_free(r->err);  r->err  = NULL; }
+    r->body_len = 0; r->status = 0;
+}
+
+// ---------- CJK glyph rasterization ----------
+// Cached font handle for 12px; cheap to keep around.
+static HFONT g_cjk_font = NULL;
+static int g_cjk_font_size = 0;
+
+static HFONT get_cjk_font(int pixel_size) {
+    if (g_cjk_font && g_cjk_font_size == pixel_size) return g_cjk_font;
+    if (g_cjk_font) DeleteObject(g_cjk_font);
+    LOGFONTW lf = {0};
+    lf.lfHeight = -pixel_size;
+    lf.lfWeight = FW_NORMAL;
+    lf.lfCharSet = DEFAULT_CHARSET;
+    lf.lfQuality = NONANTIALIASED_QUALITY;
+    lf.lfOutPrecision = OUT_TT_PRECIS;
+    lf.lfClipPrecision = CLIP_DEFAULT_PRECIS;
+    wcscpy(lf.lfFaceName, L"Microsoft YaHei");
+    g_cjk_font = CreateFontIndirectW(&lf);
+    g_cjk_font_size = pixel_size;
+    return g_cjk_font;
+}
+
+uint8_t* platform_get_glyph(uint32_t codepoint, int pixel_size, int* w, int* h) {
+    if (!w || !h) return NULL;
+    *w = 0; *h = 0;
+    HDC dc = GetDC(NULL);
+    HFONT font = get_cjk_font(pixel_size);
+    HFONT old_font = (HFONT)SelectObject(dc, font);
+
+    GLYPHMETRICS gm = {0};
+    MAT2 mat = {0};
+    mat.eM11.fract = 1;  // identity
+    mat.eM22.fract = 1;
+
+    wchar_t wc = (wchar_t)codepoint;  // BMP only; surrogates not handled (MVP)
+    DWORD needed = GetGlyphOutlineW(dc, wc, GGO_BITMAP, &gm, 0, NULL, &mat);
+    if (needed == GDI_ERROR || needed == 0) {
+        SelectObject(dc, old_font);
+        ReleaseDC(NULL, dc);
+        return NULL;
+    }
+    uint8_t* buf = (uint8_t*)moyu_alloc(needed);
+    DWORD got = GetGlyphOutlineW(dc, wc, GGO_BITMAP, &gm, needed, buf, &mat);
+    SelectObject(dc, old_font);
+    ReleaseDC(NULL, dc);
+    if (got == GDI_ERROR) {
+        moyu_free(buf);
+        return NULL;
+    }
+    *w = (int)gm.gmBlackBoxX;
+    *h = (int)gm.gmBlackBoxY;
+    return buf;
+}
