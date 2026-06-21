@@ -1,4 +1,8 @@
 #include "cJSON.h"
+#include "agent.h"
+#include "async.h"
+#include "chat.h"
+#include "builtin.h"
 #include "context.h"
 #include "emotion.h"
 #include "event.h"
@@ -8,13 +12,17 @@
 #include "loop.h"
 #include "lua_rt.h"
 #include "mcp.h"
+#include "memory.h"
 #include "mem.h"
 #include "persona.h"
 #include "platform.h"
 #include "procedural.h"
 #include "render.h"
+#include "secrets.h"
 #include "sprite.h"
+#include "state.h"
 #include "tool.h"
+#include "workdir.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -25,9 +33,10 @@
 #include <windows.h>
 #endif
 
-#define WIN_W 160
-#define WIN_H 160
-#define PET_SIZE (32 * PET_SCALE)  // 96, matches loop.c
+#define WIN_W 220
+#define WIN_H 220
+#define PET_FRAME_SIZE 48
+#define PET_SIZE (PET_FRAME_SIZE * PET_SCALE)
 
 static char* path_relative_to_exe(const char* name) {
   const char* dir = platform_exe_dir();
@@ -100,31 +109,121 @@ static bool load_config(const char* path, moyu_app* app) {
     if (v && cJSON_IsNumber(v)) app->rare_event_chance = (float)v->valuedouble;
   }
 
+  cJSON* privacy = cJSON_GetObjectItem(root, "privacy");
+  cJSON* roots = privacy ? cJSON_GetObjectItem(privacy, "observe_roots") : NULL;
+  if (roots && cJSON_IsArray(roots) && cJSON_GetArraySize(roots) > 0) {
+    cJSON* first = cJSON_GetArrayItem(roots, 0);
+    if (cJSON_IsString(first) && first->valuestring[0]) {
+      if (app->observe_root) moyu_free(app->observe_root);
+      app->observe_root = moyu_strdup(first->valuestring);
+      if (app->state)
+        state_permission_set(app->state,
+                             "filesystem.observe",
+                             app->observe_root,
+                             "allow",
+                             true);
+    }
+  }
+  cJSON* autonomy = cJSON_GetObjectItem(root, "autonomy");
+  if (autonomy && app->agent) {
+    cJSON* enabled = cJSON_GetObjectItem(autonomy, "enabled");
+    if (enabled && cJSON_IsBool(enabled))
+      app->agent->autonomous_enabled = cJSON_IsTrue(enabled);
+  }
+
   // MCP servers (dynamic tool loading)
   cJSON* servers = cJSON_GetObjectItem(root, "mcp_servers");
   if (servers && cJSON_IsArray(servers)) {
     int n = cJSON_GetArraySize(servers);
     for (int i = 0; i < n; i++) {
       cJSON* s = cJSON_GetArrayItem(servers, i);
+      cJSON* name = cJSON_GetObjectItem(s, "name");
+      cJSON* transport = cJSON_GetObjectItem(s, "transport");
       cJSON* url = cJSON_GetObjectItem(s, "url");
       cJSON* key = cJSON_GetObjectItem(s, "api_key");
-      if (!url || !cJSON_IsString(url)) continue;
       mcp_client* mc = (mcp_client*)moyu_alloc(sizeof(mcp_client));
-      mcp_client_init(mc,
-                      url->valuestring,
-                      key && cJSON_IsString(key) ? key->valuestring : NULL);
-      LOGI("Loading MCP server: %s", url->valuestring);
+      const char* server_name = name && cJSON_IsString(name)
+                                    ? name->valuestring
+                                    : "mcp";
+      bool is_stdio = transport && cJSON_IsString(transport) &&
+                      strcmp(transport->valuestring, "stdio") == 0;
+      if (is_stdio) {
+        cJSON* command = cJSON_GetObjectItem(s, "command");
+        cJSON* args = cJSON_GetObjectItem(s, "args");
+        cJSON* cwd = cJSON_GetObjectItem(s, "cwd");
+        if (!command || !cJSON_IsString(command)) {
+          moyu_free(mc);
+          continue;
+        }
+        char cmdline[4096];
+        snprintf(cmdline, sizeof(cmdline), "\"%s\"", command->valuestring);
+        if (args && cJSON_IsArray(args)) {
+          int ac = cJSON_GetArraySize(args);
+          for (int ai = 0; ai < ac; ai++) {
+            cJSON* av = cJSON_GetArrayItem(args, ai);
+            if (!cJSON_IsString(av)) continue;
+            strncat(cmdline, " \"", sizeof(cmdline) - strlen(cmdline) - 1);
+            strncat(cmdline,
+                    av->valuestring,
+                    sizeof(cmdline) - strlen(cmdline) - 1);
+            strncat(cmdline, "\"", sizeof(cmdline) - strlen(cmdline) - 1);
+          }
+        }
+        mcp_client_init_stdio(
+            mc,
+            server_name,
+            cmdline,
+            cwd && cJSON_IsString(cwd) ? cwd->valuestring : NULL);
+      } else {
+        if (!url || !cJSON_IsString(url)) {
+          moyu_free(mc);
+          continue;
+        }
+        mcp_client_init_http(
+            mc,
+            server_name,
+            url->valuestring,
+            key && cJSON_IsString(key) ? key->valuestring : NULL);
+      }
+      LOGI("Loading MCP server: %s", server_name);
       if (mcp_register_tools(mc, app->tools)) {
         LOGI("MCP tools registered (%zu)", mc->tool_count);
       } else {
-        LOGW("MCP connect failed: %s", url->valuestring);
+        LOGW("MCP connect failed: %s", server_name);
       }
-      // Leak mc for program lifetime (small); could track and free later.
+      if (app->mcp_client_count == app->mcp_client_cap) {
+        app->mcp_client_cap = app->mcp_client_cap ? app->mcp_client_cap * 2 : 4;
+        app->mcp_clients = (mcp_client**)moyu_realloc(
+            app->mcp_clients, app->mcp_client_cap * sizeof(mcp_client*));
+      }
+      app->mcp_clients[app->mcp_client_count++] = mc;
     }
   }
 
   cJSON_Delete(root);
   return true;
+}
+
+static bool write_user_config(const char* path, const moyu_app* app) {
+  cJSON* root = cJSON_CreateObject();
+  cJSON* llm = cJSON_AddObjectToObject(root, "llm");
+  cJSON_AddStringToObject(llm, "base_url", app->llm->base_url);
+  cJSON_AddStringToObject(llm, "api_key_source", "windows_dpapi");
+  cJSON_AddStringToObject(llm, "model", app->llm->model);
+  cJSON_AddNumberToObject(llm, "max_tokens", app->llm->max_tokens);
+  cJSON_AddNumberToObject(llm, "temperature", app->llm->temperature);
+  cJSON_AddNumberToObject(llm, "daily_limit", app->llm_daily_limit);
+  cJSON_AddItemToObject(root, "mcp_servers", cJSON_CreateArray());
+  cJSON* privacy = cJSON_AddObjectToObject(root, "privacy");
+  cJSON_AddItemToObject(privacy, "observe_roots", cJSON_CreateArray());
+  cJSON* autonomy = cJSON_AddObjectToObject(root, "autonomy");
+  cJSON_AddBoolToObject(autonomy, "enabled", 1);
+  cJSON_AddBoolToObject(autonomy, "silent_only", 0);
+  char* text = cJSON_Print(root);
+  cJSON_Delete(root);
+  bool ok = text && platform_write_file_atomic(path, text, strlen(text));
+  if (text) moyu_free(text);
+  return ok;
 }
 
 // Built-in tools ----------------------------------------------------------
@@ -156,21 +255,30 @@ static char* tool_distance(const char* input_json, void* user) {
 
 static void register_builtin_tools(moyu_app* app) {
   tool_def say = {
-      "say",
-      "Make the pet say something.",
-      "{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"}}}",
-      tool_say,
-      app};
-  tool_def poke = {"poke",
-                   "Poke the pet (happy reaction).",
-                   "{\"type\":\"object\"}",
-                   tool_poke,
-                   app};
-  tool_def distance = {"mouse_distance",
-                       "Get distance from cursor to pet (pixels).",
-                       "{\"type\":\"object\"}",
-                       tool_distance,
-                       app};
+      .name = "pet.say",
+      .description = "Make the pet say something.",
+      .input_schema_json = "{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"}}}",
+      .source = "builtin",
+      .affordance = "{\"domain\":\"pet\",\"actions\":[\"express\"]}",
+      .risk = TOOL_OBSERVE,
+      .invoke = tool_say,
+      .user = app};
+  tool_def poke = {.name = "pet.poke",
+                   .description = "Poke the pet.",
+                   .input_schema_json = "{\"type\":\"object\"}",
+                   .source = "builtin",
+                   .affordance = "{\"domain\":\"pet\",\"actions\":[\"express\"]}",
+                   .risk = TOOL_OBSERVE,
+                   .invoke = tool_poke,
+                   .user = app};
+  tool_def distance = {.name = "system.mouse_distance",
+                       .description = "Get distance from cursor to pet in pixels.",
+                       .input_schema_json = "{\"type\":\"object\"}",
+                       .source = "builtin",
+                       .affordance = "{\"domain\":\"system\",\"senses\":[\"proximity\"]}",
+                       .risk = TOOL_OBSERVE,
+                       .invoke = tool_distance,
+                       .user = app};
   tool_registry_add(app->tools, say);
   tool_registry_add(app->tools, poke);
   tool_registry_add(app->tools, distance);
@@ -182,10 +290,11 @@ int WINAPI WinMain(HINSTANCE hI, HINSTANCE hP, LPSTR cmd, int show)
 int main(int argc, char** argv)
 #endif
 {
+  bool smoke_llm = false;
 #ifdef _WIN32
   (void)hI;
   (void)hP;
-  (void)cmd;
+  smoke_llm = cmd && strstr(cmd, "--smoke-llm") != NULL;
   (void)show;
   // Attach a console for log output if launched from one.
   if (AttachConsole(ATTACH_PARENT_PROCESS)) {
@@ -233,20 +342,102 @@ int main(int argc, char** argv)
   emotion_init(&app.emotion, &app.personality);
   event_queue_init(&app.events, 64);
 
+  // Persistent home and state. The old executable-relative configuration is
+  // still accepted below for a seamless v0.1 migration.
+  moyu_workdir workdir;
+  state_store state;
+  memory_system memory;
+  memset(&workdir, 0, sizeof(workdir));
+  memset(&state, 0, sizeof(state));
+  memset(&memory, 0, sizeof(memory));
+  if (!workdir_init(&workdir) || !state_open(&state, workdir.db_path) ||
+      !memory_init(&memory, &workdir, &state)) {
+    LOGE("persistent runtime initialization failed");
+    workdir_free(&workdir);
+    return 1;
+  }
+  app.workdir = &workdir;
+  app.state = &state;
+  app.memory = &memory;
+  builtin_register_persistent(&app);
+
+  agent_runtime agent;
+  agent_init(&agent, &app);
+  app.agent = &agent;
+
   // Render
   skin_init_default(&app.sk);
   app.render = render_new(WIN_W, WIN_H);
   app.current_anim = ANIM_IDLE;
   app.current_frame = 0;
+  app.render_dirty = true;
+  app.anim_until_ms = platform_now_ms() + 2200;
 
   // Config
-  char* cfg_path = path_relative_to_exe("assets\\config.json");
-  load_config(cfg_path, &app);
-  moyu_free(cfg_path);
+  bool had_user_config = platform_file_exists(workdir.config_path);
+  if (had_user_config) {
+    load_config(workdir.config_path, &app);
+  } else {
+    char* cfg_path = path_relative_to_exe("assets\\config.json");
+    load_config(cfg_path, &app);
+    moyu_free(cfg_path);
+  }
+  if (app.llm->api_key && app.llm->api_key[0]) {
+    secrets_store(workdir.secrets_path, app.llm->api_key);
+    if (!had_user_config) write_user_config(workdir.config_path, &app);
+  } else {
+    char* secret = secrets_load(workdir.secrets_path);
+    if (secret && secret[0]) {
+      moyu_free(app.llm->api_key);
+      app.llm->api_key = secret;
+    } else if (secret) {
+      moyu_free(secret);
+    }
+  }
+  if (!app.observe_root) {
+    app.observe_root = state_meta_get(&state, "observe_root");
+    if (app.observe_root)
+      state_permission_set(&state,
+                           "filesystem.observe",
+                           app.observe_root,
+                           "allow",
+                           true);
+  }
+  {
+    char* autonomy = state_meta_get(&state, "autonomy_enabled");
+    if (autonomy) {
+      app.agent->autonomous_enabled = strcmp(autonomy, "0") != 0;
+      moyu_free(autonomy);
+    }
+  }
+  app.last_collection_title = state_meta_get(&state, "last_collection_title");
+  app.last_collection_body = state_meta_get(&state, "last_collection_body");
 
   // Determine LLM enabled state
   app.llm_enabled = app.llm->api_key && app.llm->api_key[0];
   if (!app.llm_enabled) LOGI("LLM disabled (empty api_key in config.json)");
+
+  if (smoke_llm) {
+    const char* messages[2] = {
+        "You are MOYU. Reply with exactly: MOYU_SMOKE_OK",
+        "Runtime connectivity smoke test."};
+    llm_result smoke = llm_complete(app.llm, NULL, messages, 2, 30000);
+    bool ok = smoke.text && strstr(smoke.text, "MOYU_SMOKE_OK") != NULL;
+    LOGI("LLM smoke: %s", ok ? "OK" : "FAILED");
+    if (smoke.error) LOGE("LLM smoke error: %s", smoke.error);
+    llm_result_free(&smoke);
+    skin_free(&app.sk);
+    render_free(&app.render);
+    memory_free(&memory);
+    state_close(&state);
+    workdir_free(&workdir);
+    event_queue_free(&app.events);
+    context_store_free(&app.ctx);
+    tool_registry_free(&tools);
+    llm_cache_free(&cache);
+    llm_config_free(&llm_cfg);
+    return ok ? 0 : 2;
+  }
 
   // Position pet near bottom-right of primary screen
   int sx = 0, sy = 0, sw = 1920, sh = 1080;
@@ -291,6 +482,19 @@ int main(int argc, char** argv)
     LOGE("window create failed");
     return 1;
   }
+  app.async = async_worker_create(app.llm, app.win);
+  if (!app.async) {
+    LOGE("I/O worker create failed");
+    platform_window_destroy(app.win);
+    return 1;
+  }
+  app.chat = chat_ui_create(&app);
+  if (!app.chat) {
+    LOGE("chat UI create failed");
+    async_worker_destroy(app.async);
+    platform_window_destroy(app.win);
+    return 1;
+  }
   // Only the pet area (bottom-centered 96x96) captures mouse; the rest of
   // the transparent window (including the bubble region above) passes
   // clicks through to the desktop.
@@ -307,6 +511,13 @@ int main(int argc, char** argv)
 
   // Initial context node
   context_push(&app.ctx, CTX_IDLE, "boot", "ok", "{\"ver\":\"0.1\"}");
+  state_add_episode(&state,
+                    "lifecycle",
+                    "MOYU woke up and recovered its home.",
+                    "{\"event\":\"boot\"}",
+                    0.15,
+                    0.05);
+  state_cleanup(&state, 90);
 
   LOGI("MOYU starting (window %dx%d at %d,%d)",
        WIN_W,
@@ -314,16 +525,33 @@ int main(int argc, char** argv)
        app.pet_x,
        app.pet_y);
 
+  if (!getenv("MOYU_SKIP_ONBOARDING")) chat_ui_onboarding(app.chat);
+
   int rc = moyu_app_run(&app);
 
   // Cleanup
   if (app.say_text) moyu_free(app.say_text);
+  if (app.info_title) moyu_free(app.info_title);
+  if (app.info_body) moyu_free(app.info_body);
+  if (app.last_collection_title) moyu_free(app.last_collection_title);
+  if (app.last_collection_body) moyu_free(app.last_collection_body);
+  if (app.observe_root) moyu_free(app.observe_root);
   if (app.L) lua_runtime_destroy(app.L);
+  chat_ui_destroy(app.chat);
+  async_worker_destroy(app.async);
   platform_window_destroy(app.win);
   skin_free(&app.sk);
   render_free(&app.render);
   event_queue_free(&app.events);
   context_store_free(&app.ctx);
+  for (size_t i = 0; i < app.mcp_client_count; i++) {
+    mcp_client_free(app.mcp_clients[i]);
+    moyu_free(app.mcp_clients[i]);
+  }
+  if (app.mcp_clients) moyu_free(app.mcp_clients);
+  memory_free(&memory);
+  state_close(&state);
+  workdir_free(&workdir);
   tool_registry_free(&tools);
   llm_cache_free(&cache);
   llm_config_free(&llm_cfg);

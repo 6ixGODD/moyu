@@ -26,12 +26,45 @@ uint64_t platform_now_ms(void) {
   return (uint64_t)(c.QuadPart * 1000ULL / freq.QuadPart);
 }
 
+uint64_t platform_unix_ms(void) {
+  FILETIME ft;
+  ULARGE_INTEGER t;
+  GetSystemTimeAsFileTime(&ft);
+  t.LowPart = ft.dwLowDateTime;
+  t.HighPart = ft.dwHighDateTime;
+  return (t.QuadPart - 116444736000000000ULL) / 10000ULL;
+}
+
 void platform_sleep_ms(uint32_t ms) {
   Sleep(ms);
 }
 
 // ---------- Filesystem ----------
 static char g_exe_dir[MAX_PATH] = {0};
+static char g_home_dir[MAX_PATH * 4] = {0};
+
+static bool utf8_to_wide(const char* s, wchar_t* out, size_t cap) {
+  if (!s || !out || cap == 0) return false;
+  return MultiByteToWideChar(CP_UTF8, 0, s, -1, out, (int)cap) > 0;
+}
+
+const char* platform_home_dir(void) {
+  if (g_home_dir[0]) return g_home_dir;
+  wchar_t wbuf[MAX_PATH];
+  DWORD n = GetEnvironmentVariableW(L"MOYU_HOME", wbuf, MAX_PATH);
+  if (n == 0 || n >= MAX_PATH)
+    n = GetEnvironmentVariableW(L"USERPROFILE", wbuf, MAX_PATH);
+  if (n == 0 || n >= MAX_PATH) wcscpy_s(wbuf, MAX_PATH, L".");
+  WideCharToMultiByte(CP_UTF8,
+                      0,
+                      wbuf,
+                      -1,
+                      g_home_dir,
+                      (int)sizeof(g_home_dir),
+                      NULL,
+                      NULL);
+  return g_home_dir;
+}
 const char* platform_exe_dir(void) {
   if (g_exe_dir[0]) return g_exe_dir;
   DWORD n = GetModuleFileNameW(NULL, (wchar_t*)g_exe_dir, MAX_PATH);
@@ -78,6 +111,66 @@ bool platform_write_file(const char* path, const void* data, size_t len) {
   size_t wr = fwrite(data, 1, len, f);
   fclose(f);
   return wr == len;
+}
+
+bool platform_file_exists(const char* path) {
+  wchar_t wpath[32768];
+  if (!utf8_to_wide(path, wpath, 32768)) return false;
+  DWORD attrs = GetFileAttributesW(wpath);
+  return attrs != INVALID_FILE_ATTRIBUTES;
+}
+
+bool platform_make_dirs(const char* path) {
+  wchar_t wpath[32768];
+  if (!utf8_to_wide(path, wpath, 32768)) return false;
+  size_t n = wcslen(wpath);
+  for (size_t i = 1; i < n; i++) {
+    if (wpath[i] != L'\\' && wpath[i] != L'/') continue;
+    wchar_t saved = wpath[i];
+    wpath[i] = 0;
+    if (!(i == 2 && wpath[1] == L':')) CreateDirectoryW(wpath, NULL);
+    wpath[i] = saved;
+  }
+  if (CreateDirectoryW(wpath, NULL)) return true;
+  return GetLastError() == ERROR_ALREADY_EXISTS;
+}
+
+bool platform_remove_file(const char* path) {
+  wchar_t wpath[32768];
+  return utf8_to_wide(path, wpath, 32768) && DeleteFileW(wpath);
+}
+
+bool platform_move_file(const char* from, const char* to, bool replace) {
+  wchar_t wf[32768], wt[32768];
+  if (!utf8_to_wide(from, wf, 32768) || !utf8_to_wide(to, wt, 32768))
+    return false;
+  DWORD flags = MOVEFILE_WRITE_THROUGH;
+  if (replace) flags |= MOVEFILE_REPLACE_EXISTING;
+  return MoveFileExW(wf, wt, flags) != 0;
+}
+
+bool platform_write_file_atomic(const char* path, const void* data, size_t len) {
+  size_t n = strlen(path);
+  char* tmp = (char*)moyu_alloc(n + 5);
+  char* bak = (char*)moyu_alloc(n + 5);
+  snprintf(tmp, n + 5, "%s.tmp", path);
+  snprintf(bak, n + 5, "%s.bak", path);
+  bool ok = platform_write_file(tmp, data, len);
+  wchar_t wpath[32768], wtmp[32768], wbak[32768];
+  if (ok && utf8_to_wide(path, wpath, 32768) &&
+      utf8_to_wide(tmp, wtmp, 32768) && utf8_to_wide(bak, wbak, 32768)) {
+    if (platform_file_exists(path))
+      CopyFileW(wpath, wbak, FALSE);
+    ok = MoveFileExW(wtmp,
+                     wpath,
+                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+  } else {
+    ok = false;
+  }
+  if (!ok) platform_remove_file(tmp);
+  moyu_free(tmp);
+  moyu_free(bak);
+  return ok;
 }
 
 void platform_get_cursor_pos(int* x, int* y) {
@@ -130,12 +223,14 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
 }
 
 static const wchar_t* WCLASS = L"moyu_pet_window";
+#define WM_MOYU_WAKE (WM_APP + 42)
 
 static void register_class(void) {
   static bool done = false;
   if (done) return;
   WNDCLASSEXW wc = {0};
   wc.cbSize = sizeof(wc);
+  wc.style = CS_DBLCLKS;
   wc.lpfnWndProc = wnd_proc;
   wc.hInstance = GetModuleHandleW(NULL);
   wc.lpszClassName = WCLASS;
@@ -180,6 +275,7 @@ platform_window* platform_window_create(int w,
     return NULL;
   }
   SetWindowLongPtrW(pw->hwnd, GWLP_USERDATA, (LONG_PTR)pw);
+  DragAcceptFiles(pw->hwnd, TRUE);
 
   // 32-bit DIB section for alpha-blended blit
   BITMAPINFO bi = {0};
@@ -284,6 +380,10 @@ void platform_window_set_clickable(
   w->ch = h_;
 }
 
+void platform_window_wake(platform_window* w) {
+  if (w && w->hwnd) PostMessageW(w->hwnd, WM_MOYU_WAKE, 0, 0);
+}
+
 // ---------- Events ----------
 bool platform_poll_event(platform_window* w,
                          platform_event* out,
@@ -307,28 +407,55 @@ bool platform_poll_event(platform_window* w,
         return true;
       }
       case WM_LBUTTONDOWN:
+        SetCapture(w->hwnd);
         out->type = PE_MOUSE_DOWN;
         out->button = 0;
         out->x = GET_X_LPARAM(msg.lParam);
         out->y = GET_Y_LPARAM(msg.lParam);
         return true;
+      case WM_LBUTTONDBLCLK:
+        out->type = PE_MOUSE_DOUBLE_CLICK;
+        out->button = 0;
+        out->x = GET_X_LPARAM(msg.lParam);
+        out->y = GET_Y_LPARAM(msg.lParam);
+        return true;
       case WM_RBUTTONDOWN:
+        SetCapture(w->hwnd);
         out->type = PE_MOUSE_DOWN;
         out->button = 1;
         out->x = GET_X_LPARAM(msg.lParam);
         out->y = GET_Y_LPARAM(msg.lParam);
         return true;
       case WM_LBUTTONUP:
+        ReleaseCapture();
         out->type = PE_MOUSE_UP;
         out->button = 0;
         out->x = GET_X_LPARAM(msg.lParam);
         out->y = GET_Y_LPARAM(msg.lParam);
         return true;
       case WM_RBUTTONUP:
+        ReleaseCapture();
         out->type = PE_MOUSE_UP;
         out->button = 1;
         out->x = GET_X_LPARAM(msg.lParam);
         out->y = GET_Y_LPARAM(msg.lParam);
+        return true;
+      case WM_DROPFILES: {
+        HDROP drop = (HDROP)msg.wParam;
+        wchar_t path[4096];
+        UINT n = DragQueryFileW(drop, 0, path, 4096);
+        if (n > 0) {
+          WideCharToMultiByte(
+              CP_UTF8, 0, path, -1, out->path, (int)sizeof(out->path), NULL, NULL);
+          out->type = PE_DROP_FILE;
+          DragFinish(drop);
+          return true;
+        }
+        DragFinish(drop);
+        return false;
+      }
+      case WM_MOYU_WAKE:
+        out->type = PE_WAKE;
         return true;
       default:
         // Unknown message dispatched; treat as no-op.
@@ -349,6 +476,8 @@ bool platform_poll_event(platform_window* w,
 }
 
 // ---------- HTTP via WinHTTP ----------
+static _Thread_local const char* g_http_extra_headers = NULL;
+static _Thread_local const char* g_http_content_type = NULL;
 static void split_url(const char* url,
                       wchar_t* scheme,
                       int scheme_cch,
@@ -465,12 +594,31 @@ platform_http_resp platform_http_post_json(const char* url,
       auth_hdr,
       (DWORD)-1,
       WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
-  const wchar_t* ctype = L"Content-Type: application/json; charset=utf-8";
+  wchar_t ctype_buf[256] = L"Content-Type: ";
+  MultiByteToWideChar(CP_UTF8,
+                      0,
+                      g_http_content_type ? g_http_content_type
+                                          : "application/json; charset=utf-8",
+                      -1,
+                      ctype_buf + wcslen(ctype_buf),
+                      (int)(256 - wcslen(ctype_buf)));
   WinHttpAddRequestHeaders(
       hreq,
-      ctype,
+      ctype_buf,
       (DWORD)-1,
       WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
+  if (g_http_extra_headers && g_http_extra_headers[0]) {
+    int n = MultiByteToWideChar(
+        CP_UTF8, 0, g_http_extra_headers, -1, NULL, 0);
+    wchar_t* headers = (wchar_t*)moyu_alloc((size_t)n * sizeof(wchar_t));
+    MultiByteToWideChar(CP_UTF8, 0, g_http_extra_headers, -1, headers, n);
+    WinHttpAddRequestHeaders(hreq,
+                             headers,
+                             (DWORD)-1,
+                             WINHTTP_ADDREQ_FLAG_ADD |
+                                 WINHTTP_ADDREQ_FLAG_REPLACE);
+    moyu_free(headers);
+  }
 
   size_t body_len = strlen(json_body);
   BOOL ok = WinHttpSendRequest(hreq,
@@ -511,6 +659,33 @@ platform_http_resp platform_http_post_json(const char* url,
                       &size,
                       WINHTTP_NO_HEADER_INDEX);
   r.status = (int)status;
+  {
+    wchar_t value[512];
+    DWORD bytes = sizeof(value);
+    if (WinHttpQueryHeaders(hreq,
+                            WINHTTP_QUERY_CONTENT_TYPE,
+                            WINHTTP_HEADER_NAME_BY_INDEX,
+                            value,
+                            &bytes,
+                            WINHTTP_NO_HEADER_INDEX)) {
+      int n = WideCharToMultiByte(CP_UTF8, 0, value, -1, NULL, 0, NULL, NULL);
+      r.content_type = (char*)moyu_alloc((size_t)n);
+      WideCharToMultiByte(
+          CP_UTF8, 0, value, -1, r.content_type, n, NULL, NULL);
+    }
+    bytes = sizeof(value);
+    if (WinHttpQueryHeaders(hreq,
+                            WINHTTP_QUERY_CUSTOM,
+                            L"MCP-Session-Id",
+                            value,
+                            &bytes,
+                            WINHTTP_NO_HEADER_INDEX)) {
+      int n = WideCharToMultiByte(CP_UTF8, 0, value, -1, NULL, 0, NULL, NULL);
+      r.session_id = (char*)moyu_alloc((size_t)n);
+      WideCharToMultiByte(
+          CP_UTF8, 0, value, -1, r.session_id, n, NULL, NULL);
+    }
+  }
 
   // Body
   size_t total = 0, cap = 8192;
@@ -536,6 +711,27 @@ platform_http_resp platform_http_post_json(const char* url,
   return r;
 }
 
+platform_http_resp platform_http_request(const char* method,
+                                         const char* url,
+                                         const char* auth_bearer,
+                                         const char* extra_headers,
+                                         const char* body,
+                                         const char* content_type,
+                                         int timeout_ms) {
+  if (method && strcmp(method, "POST") != 0) {
+    platform_http_resp r = {0};
+    r.err = moyu_strdup("only POST is implemented by the Windows HTTP adapter");
+    return r;
+  }
+  g_http_extra_headers = extra_headers;
+  g_http_content_type = content_type;
+  platform_http_resp r =
+      platform_http_post_json(url, auth_bearer, body ? body : "", timeout_ms);
+  g_http_extra_headers = NULL;
+  g_http_content_type = NULL;
+  return r;
+}
+
 void platform_http_resp_free(platform_http_resp* r) {
   if (!r) return;
   if (r->body) {
@@ -545,6 +741,14 @@ void platform_http_resp_free(platform_http_resp* r) {
   if (r->err) {
     moyu_free(r->err);
     r->err = NULL;
+  }
+  if (r->content_type) {
+    moyu_free(r->content_type);
+    r->content_type = NULL;
+  }
+  if (r->session_id) {
+    moyu_free(r->session_id);
+    r->session_id = NULL;
   }
   r->body_len = 0;
   r->status = 0;

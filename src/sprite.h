@@ -26,6 +26,12 @@ typedef enum {
   ANIM_HAPPY,
   ANIM_SAD,
   ANIM_OBSERVE,
+  ANIM_WALK,
+  ANIM_WORK,
+  ANIM_WAIT,
+  ANIM_FOUND,
+  ANIM_CONFUSED,
+  ANIM_GIVEUP,
   ANIM_COUNT,
 } anim_id;
 
@@ -43,7 +49,7 @@ typedef struct {
   int fps[ANIM_COUNT];
 } skin;
 
-void skin_init_default(skin* sk);  // builtin procedural skin + default anim table
+void skin_init_default(skin* sk);  // builtin 48px cream spirit + anim table
 void skin_free(skin* sk);
 
 // Load a BMP spritesheet and split it into fw x fh frames (row-major).

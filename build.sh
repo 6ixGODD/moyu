@@ -16,6 +16,7 @@ esac
 
 LUA_SRC=$(ls "$ROOT/third_party/lua"/*.c)
 CJSON_SRC="$ROOT/third_party/cjson/cJSON.c"
+SQLITE_SRC="$ROOT/third_party/sqlite/sqlite3.c"
 
 MOYU_SRC=$(find "$ROOT/src" -name '*.c' | sort)
 if [ "$HOST" = "win32" ]; then
@@ -27,15 +28,15 @@ else
 fi
 
 WARN="-Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wno-unused-variable -Wno-missing-field-initializers"
-CFLAGS="-std=c11 -O2 -D_CRT_SECURE_NO_WARNINGS $WARN -I$ROOT/src -I$ROOT/third_party/lua -I$ROOT/third_party/cjson"
+CFLAGS="-std=c11 -O2 -D_CRT_SECURE_NO_WARNINGS -DSQLITE_THREADSAFE=1 -DSQLITE_OMIT_LOAD_EXTENSION -DSQLITE_DEFAULT_MEMSTATUS=0 $WARN -I$ROOT/src -I$ROOT/third_party/lua -I$ROOT/third_party/cjson -I$ROOT/third_party/sqlite"
 
 if [ "$HOST" = "win32" ]; then
     OUT="$BUILD/moyu.exe"
-    LINK="-lwinhttp -luser32 -lgdi32 -lshell32 -lws2_32"
+    LINK="-lwinhttp -luser32 -lgdi32 -lshell32 -lole32 -lcrypt32 -lws2_32"
     LDFLAGS="-Wl,-subsystem,windows"
     echo "[build] host=win32 cc=$CC"
     # shellcheck disable=SC2086
-    $CC $CFLAGS $MOYU_SRC $LUA_SRC $CJSON_SRC $LINK $LDFLAGS -o "$OUT"
+    $CC $CFLAGS $MOYU_SRC $LUA_SRC $CJSON_SRC $SQLITE_SRC $LINK $LDFLAGS -o "$OUT"
 else
     OUT="$BUILD/moyu"
     if [ "$HOST" = "macos" ]; then
@@ -45,7 +46,7 @@ else
     fi
     echo "[build] host=$HOST cc=$CC"
     # shellcheck disable=SC2086
-    $CC $CFLAGS $MOYU_SRC $LUA_SRC $CJSON_SRC $LINK -o "$OUT"
+    $CC $CFLAGS $MOYU_SRC $LUA_SRC $CJSON_SRC $SQLITE_SRC $LINK -o "$OUT"
 fi
 
 # Copy assets & scripts next to binary

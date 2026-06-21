@@ -43,7 +43,7 @@ bool image_load_bmp(const char* path,
   uint16_t bpp = rd16(data + 28);
   uint32_t comp = rd32(data + 30);
 
-  if (w <= 0 || h == 0 || (bpp != 24 && bpp != 32) || comp != 0) {
+  if (hsize < 40 || w <= 0 || h == 0 || (bpp != 24 && bpp != 32) || comp != 0) {
     LOGW("bmp: %s unsupported (w=%d h=%d bpp=%u comp=%u)", path, w, h, bpp, comp);
     moyu_free(data);
     return false;

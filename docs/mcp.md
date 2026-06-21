@@ -1,113 +1,66 @@
-# MCP (Model Context Protocol)
+# MCP and Tools
 
-MOYU ships with a minimal MCP client so the pet can call external tools
-exposed by any MCP server speaking HTTP transport.
+## Supported transports
 
-## What MCP adds
+MOYU implements MCP tools over:
 
-Without MCP, the pet has three built-in tools (`say`, `poke`,
-`mouse_distance`) implemented in C. MCP lets you add arbitrarily many
-more — filesystem search, web fetch, calendar, home automation — without
-recompiling. Tools are discovered at startup and become first-class
-entries in the same `tool_registry` the built-ins use.
+- stdio child processes with newline-delimited JSON-RPC
+- Streamable HTTP POST with JSON or SSE `data:` responses
+
+The client sends MCP protocol/version and Accept headers, stores `MCP-Session-Id`, performs initialize/initialized, discovers tools, and invokes tools. Protocol target is `2025-11-25`; the server's negotiated version is retained.
 
 ## Configuration
 
-Add servers to `assets/config.json`:
+stdio:
 
 ```json
 {
-  "mcp_servers": [
-    {
-      "url": "https://my-mcp-server.example.com/rpc",
-      "api_key": "optional-bearer-token"
-    }
-  ]
+  "name": "git-local",
+  "transport": "stdio",
+  "command": "D:\\apps\\moyu-mcp-git.exe",
+  "args": [],
+  "cwd": "D:\\WorkSpace"
 }
 ```
 
-At boot, `main.c` iterates this list, creates an `mcp_client` per entry,
-calls `mcp_register_tools`, and merges the discovered tools into the
-shared `tool_registry`. Each MCP tool becomes a `tool_def` whose `invoke`
-proxies back to `mcp_call` over HTTP.
+Streamable HTTP:
 
-## Wire protocol
-
-MCP over HTTP is JSON-RPC 2.0:
-
-**Discovery** — `tools/list`:
-```http
-POST /rpc
-Content-Type: application/json
-
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "method": "tools/list"
-}
-```
-
-Response:
 ```json
 {
-  "jsonrpc": "2.0",
-  "id": 1,
-  "result": {
-    "tools": [
-      {
-        "name": "search_web",
-        "description": "Search the public web.",
-        "inputSchema": { "type": "object", "properties": { "q": { "type": "string" } } }
-      }
-    ]
-  }
+  "name": "weather",
+  "transport": "streamable_http",
+  "url": "http://127.0.0.1:7788/mcp",
+  "api_key": ""
 }
 ```
 
-**Invocation** — `tools/call`:
-```http
-POST /rpc
-Content-Type: application/json
+Legacy entries containing only `url` are treated as Streamable HTTP.
 
-{
-  "jsonrpc": "2.0",
-  "id": 2,
-  "method": "tools/call",
-  "params": {
-    "name": "search_web",
-    "arguments": { "q": "moyu desktop pet" }
-  }
-}
+## Tool metadata
+
+Every registered tool has name, description, input schema, source, affordance and risk. Names containing publish/write/delete/remove are conservatively classified mutate; create/draft are classified draft; other discovered tools default observe.
+
+Lua may invoke builtin observe/draft tools. External tools require a durable tool/scope permission. Human chat can explicitly invoke a tool:
+
+```text
+/allow git.recent_commits *
+/tool git.recent_commits {"root":"D:\\repo"}
 ```
 
-## How tools are exposed to the LLM
+## Builtins
 
-Today, MCP tools are callable from Lua via the same `moyu.*` plumbing
-that built-ins use — they appear in the registry, and the runtime can
-dispatch to them by name. Future work: a `moyu.tool(name, args)` binding
-so Lua scripts can call any registered tool directly.
+Builtins cover time, idle time, optionally foreground process, pet expression, memory, collections, drafts, runtime explain/cancel and bounded filesystem metadata observation. User-file deletion/move/write is not built in.
 
-The LLM does not currently drive tool calling autonomously. The
-intentional design is that Lua rules decide *when* to call a tool —
-keeping the LLM as a reflective narrator, not an autonomous agent. This
-matches the TODO.md spec: 90% rule-based, 10% LLM.
+## Reference servers
 
-## Limits of the MVP
+`build.bat` and CMake produce:
 
-- **HTTP transport only.** stdio transport (used by some MCP servers like
-  the official filesystem server) is not implemented. To use those, run
-  them behind an HTTP bridge.
-- **No streaming.** Each call is one request → one response.
-- **No auth refresh.** The `api_key` is sent as a static Bearer token.
-  OAuth/token-rotation is out of scope for v0.1.
-- **No reconnection.** If a server is unreachable at boot, its tools are
-  simply absent; there is no retry loop.
-- **Lifetime.** `mcp_client` structs are allocated once at boot and live
-  for the process lifetime. Disconnecting a server at runtime is a TODO.
+- `moyu-mcp-git.exe`: stdio, recent commits/stale branches/TODO candidates
+- `moyu-mcp-notes.exe`: stdio, create draft/publish
+- `moyu-mcp-weather.exe`: Streamable HTTP on `127.0.0.1:7788`, Open-Meteo current/forecast
 
-## Writing an MCP server
+They are testable examples and do not start by default.
 
-Any HTTP endpoint that answers the two JSON-RPC methods above works. A
-~50-line Python `aiohttp` server or a static nginx config returning a
-fixed tool list is enough to experiment. See the MCP spec at
-https://modelcontextprotocol.io for the full schema.
+## Limits
+
+Resources, prompts, sampling, elicitation and OAuth are not implemented. Streamable HTTP currently uses POST request/response sessions; server-initiated standalone GET streams are outside v0.2.

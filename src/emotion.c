@@ -4,21 +4,7 @@
 
 #include <math.h>
 
-// xorshift64
-static uint64_t xr_next(uint64_t* s) {
-  uint64_t x = *s ? *s : 0x9e3779b97f4a7c15ULL;
-  x ^= x << 13;
-  x ^= x >> 7;
-  x ^= x << 17;
-  *s = x;
-  return x;
-}
-
-static float frand(uint64_t* s, float lo, float hi) {
-  uint64_t r = xr_next(s);
-  float f = (float)((r >> 11) & 0xffffff) / (float)0x1000000;
-  return lo + f * (hi - lo);
-}
+static float clampf(float v) { return v < -1 ? -1 : (v > 1 ? 1 : v); }
 
 void emotion_init(emotion* e, const personality* p) {
   e->valence = p->mood_bias;
@@ -35,18 +21,19 @@ void emotion_tick(emotion* e,
     e->last_tick_ms = now_ms;
     return;
   }
-  // Drift toward personality's mood_bias; add small random walk.
+  // Decay toward personality baselines. State only changes abruptly when a
+  // real event calls emotion_react().
   float pull_v = (p->mood_bias - e->valence) * 0.05f * dt_seconds;
   float pull_a = (0.0f - e->arousal) * 0.03f * dt_seconds;
-  float noise_v = frand(&e->rng_state, -0.05f, 0.05f) * dt_seconds;
-  float noise_a = frand(&e->rng_state, -0.05f, 0.05f) * dt_seconds;
-  e->valence += pull_v + noise_v;
-  e->arousal += pull_a + noise_a;
-  if (e->valence < -1) e->valence = -1;
-  if (e->valence > 1) e->valence = 1;
-  if (e->arousal < -1) e->arousal = -1;
-  if (e->arousal > 1) e->arousal = 1;
+  e->valence = clampf(e->valence + pull_v);
+  e->arousal = clampf(e->arousal + pull_a);
   e->last_tick_ms = now_ms;
+}
+
+void emotion_react(emotion* e, float valence_delta, float arousal_delta) {
+  if (!e) return;
+  e->valence = clampf(e->valence + valence_delta);
+  e->arousal = clampf(e->arousal + arousal_delta);
 }
 
 int emotion_anim_hint(const emotion* e) {

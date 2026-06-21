@@ -1,8 +1,9 @@
 {
   "llm": {
-    "base_url": "https://open.bigmodel.cn/api/paas/v4",
+    "base_url": "https://api.deepseek.com/v1",
     "api_key": "",
-    "model": "glm-4.7-flash",
+    "api_key_source": "windows_dpapi",
+    "model": "deepseek-v4-flash",
     "max_tokens": 1024,
     "temperature": 0.8,
     "json_mode": false,
@@ -14,9 +15,16 @@
     "curiosity": 0.6,
     "patience": 0.7
   },
-  "rules": {
-    "idle_poke_seconds": 300,
-    "rare_event_chance": 0.02
+  "privacy": {
+    "observe_roots": []
+  },
+  "autonomy": {
+    "enabled": true,
+    "silent_only": false,
+    "max_observations_per_hour": 2,
+    "max_mcp_calls_per_day": 6,
+    "max_interruptions_per_day": 3,
+    "max_llm_calls_per_day": 5
   },
   "mcp_servers": []
 }

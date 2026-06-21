@@ -10,3 +10,9 @@ typedef struct {
 } bubble_rect;
 
 bubble_rect render_bubble(render_ctx* r, const char* text, int dx, int dy_top);
+bubble_rect render_info_card(render_ctx* r,
+                             const char* title,
+                             const char* body,
+                             int dx,
+                             int dy_top,
+                             int max_w);

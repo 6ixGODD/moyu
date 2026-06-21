@@ -1,84 +1,52 @@
-# Context System
+# Memory and Context
 
-The context system is the agent's only state representation. Every
-meaningful event — a user interaction, a tool call, an LLM reflection, an
-idle tick — becomes one `context_node` in a rolling ring buffer.
+## Files
 
-## Data model
+MOYU owns one persistent directory:
 
-```c
-typedef enum {
-  CTX_IDLE = 0,
-  CTX_INTERACTION,
-  CTX_TOOL,
-  CTX_REFLECTION,
-} context_type;
-
-typedef struct {
-  uint64_t id;
-  context_type type;
-  char* input;     // JSON string (owned)
-  char* output;    // JSON string (owned, may be NULL)
-  char* metadata;  // JSON string (owned, may be NULL)
-  uint64_t ts_ms;
-} context_node;
-
-typedef struct {
-  context_node* ring;  // cap slots
-  size_t cap;          // max nodes kept (default 64)
-  size_t head;         // next write index
-  size_t count;        // current count (≤ cap)
-  uint64_t next_id;    // monotonic
-} context_store;
+```text
+~/.moyu/
+  SOUL.md       immutable to MOYU, editable by the human
+  MEMORY.md     shared, readable long-term narrative memory
+  state.db      transactional runtime state
+  secrets.dat   DPAPI-protected API key on Windows
+  config.json
+  collections/
+  drafts/
+  logs/
 ```
 
-- Each node carries **JSON strings** for input/output/metadata. JSON is
-  the canonical wire format — it survives serialization to LLM prompts,
-  MCP calls, and log files without extra conversion.
-- Strings are owned by the node (heap-copied on push, freed on overwrite).
-- The store is a ring buffer: writing past `cap` overwrites the oldest
-  node. This bounds memory without GC pauses.
+Missing files are created once and never overwrite human edits.
 
-## Operations
+## SOUL.md
 
-| Function | Purpose |
-|---|---|
-| `context_push(s, type, input, output, metadata)` | Append a node. Strings copied. |
-| `context_last_of(s, type)` | Newest node of a given type, or NULL. |
-| `context_at(s, reverse_index)` | Iterate newest-first (0 = newest). |
-| `context_hash(s)` | FNV-1a over the rolling window — used as LLM cache key. |
-| `context_to_json(s, last_n)` | Flat JSON array of the last N nodes for LLM prompts. |
+SOUL defines identity, honesty, privacy and behavioral boundaries. Every LLM request receives SOUL before other context. MOYU never writes this file.
 
-## Why a ring buffer, not a list?
+## MEMORY.md
 
-1. **Bounded memory.** A pet runs for days; an unbounded log would OOM.
-2. **No allocation on the hot path.** Writes reuse existing slots.
-3. **Cache key stability.** `context_hash` is computed over the visible
-   window only, so identical recent histories produce identical cache
-   keys — even if ancient nodes differ.
+MEMORY has controlled sections for the human, habits, beliefs, episodes and obsessions. Writes are limited to 64 KiB, deduplicated, filtered for common secret patterns, written to a temporary file and atomically replaced. The previous version is kept as `.bak`.
 
-## How nodes are produced
+`memory_consider_episode` combines importance, novelty and personality. Only eligible episodes enter a deterministic probability gate. “记住” writes directly after validation. “忘掉” requires confirmation and removes matching list entries.
 
-| Type | When | Who pushes |
-|---|---|---|
-| `CTX_IDLE` | Boot, periodic idle ticks | `loop.c` |
-| `CTX_INTERACTION` | Mouse hover, click | `loop.c` |
-| `CTX_TOOL` | Built-in or MCP tool invoked | `tool.c` / `mcp.c` |
-| `CTX_REFLECTION` | LLM completion returned | `loop.c` (after `llm_complete`) |
+## SQLite
 
-## Composing for an LLM prompt
+Schema v1 stores episodes, beliefs, drives, habits, relationships, intentions/steps, permissions, tool audit, MCP metadata, chats, inbox, collections and daily budgets. Ordinary history is retained for 90 days; promoted memory, permissions and active state are not automatically removed.
 
-When the runtime decides to consult the LLM, it calls `context_to_json(s,
-last_n)` to produce a flat array of the most recent nodes. This JSON is
-embedded into the `messages` array sent to the chat completions endpoint.
-The LLM sees the pet's recent history verbatim — no templating, no lossy
-summarisation at this layer. Summarisation, if ever needed, belongs in a
-future `CTX_SUMMARY` node type that a Lua hook can emit.
+## Prompt compose
 
-## Cache interaction
+LLM context order is fixed:
 
-`context_hash` feeds `llm_cache_get` / `llm_cache_put`. If the rolling
-window has not changed since the last call with an identical prompt, the
-cached response is returned without an HTTP round-trip. This makes the
-"occasional LLM-driven micro narrative" essentially free when nothing is
-happening.
+```text
+system safety instruction
+SOUL.md
+MEMORY.md
+active intention
+high-weight durable beliefs/episodes
+current input
+```
+
+The composed input is bounded to 24,000 characters. Raw databases, complete tool responses and credentials are never inserted.
+
+## Short-term context
+
+The existing 64-node ring remains a bounded session working memory and cache input. It is no longer the sole state representation.

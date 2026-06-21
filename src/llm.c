@@ -108,9 +108,6 @@ llm_result llm_complete(llm_config* cfg,
        r.status,
        r.body_len,
        r.err ? r.err : "(null)");
-  if (r.body && r.body_len > 0) {
-    LOGI("LLM HTTP body[:300]: %.300s", r.body);
-  }
   if (r.err) {
     res.error = moyu_strdup(r.err);
     platform_http_resp_free(&r);

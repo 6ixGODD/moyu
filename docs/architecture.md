@@ -1,106 +1,52 @@
 # Architecture
 
-MOYU is a single-threaded desktop pet agent runtime in C11 with an embedded
-Lua sandbox. The design obeys one rule: **only platform code is abstracted;
-everything else is direct.** This keeps the hot path short and the call
-stacks shallow.
+## Runtime flow
 
-## Module map
-
-All sources live in a flat `src/` directory. There is no nested
-subdirectory layout by design — see [design.md](design.md) for the
-rationale.
-
-```
-src/
-├── main.c              Assembly + WinMain entry
-├── loop.{h,c}          Event-driven main loop, owns moyu_app state
-├── context.{h,c}       Ring buffer of context_node — the agent's memory
-├── event.{h,c}         Internal event queue (anim, say, llm_trigger, ...)
-├── persona.{h,c}       Personality (4 floats, persisted)
-├── emotion.{h,c}       Valence/arousal with personality-biased random walk
-├── llm.{h,c}           OpenAI-compatible chat completion + LRU cache
-├── tool.{h,c}          Tool registry: name → C function
-├── mcp.{h,c}           MCP client (HTTP transport, dynamic tool loading)
-├── render.{h,c}        RGBA8888 backbuffer + blit + alpha
-├── sprite.{h,c}        Sprite sheet struct + frame stepping
-├── procedural.{h,c}    Code-generated 32×32 sprites (idle/blink/sleep/...)
-├── font.{h,c}          5×7 ASCII + CJK glyph rendering via platform layer
-├── lua_rt.{h,c}        Lua sandbox + moyu.* API + hooks
-├── platform.h          The ONLY abstraction — see below
-├── platform_win32.c    Full Win32 implementation
-├── platform_linux.c    X11 stub (compiles, runtime-not-implemented)
-├── platform_macos.m    Cocoa stub (compiles, runtime-not-implemented)
-├── log.{h,c}           Level-tagged logging to stderr + file
-├── mem.{h,c}           malloc/realloc/free wrappers (statistics hook)
-└── hash.{h,c}          FNV-1a 64-bit
+```text
+Win32 event / timer / worker completion
+  -> short-term context ring
+  -> belief + drive update
+  -> Lua policy proposes behavior
+  -> C BDI scheduler validates budget and permission
+  -> one intention, at most three steps
+  -> builtin or MCP tool
+  -> episode / belief / habit / inbox
+  -> optional MEMORY.md promotion
+  -> dirty render + optional bubble / terminal inbox
 ```
 
-## The platform boundary
+`moyu_app` owns the process lifetime. `main.c` assembles modules; `loop.c` is the event pump; business state lives in dedicated modules rather than accumulating in the loop.
 
-`platform.h` defines the only interface that varies by OS. Each platform
-provides one implementation file. The rest of the codebase calls these
-functions directly — there is no "platform abstraction layer" object, no
-vtable, no factory.
+## State layers
 
-| Concern | Interface |
-|---|---|
-| Window | `platform_window_create / set_pixels / set_clickable / move / show / hide` |
-| Events | `platform_poll_event` (single call, timeout-aware) |
-| Time | `platform_now_ms`, `platform_sleep_ms` |
-| HTTP | `platform_http_post_json` (sync, returns status + body + err) |
-| Files | `platform_exe_dir`, `platform_read_file`, `platform_write_file`, `platform_join_path` |
-| Glyphs | `platform_get_glyph(codepoint, pixel_size, &w, &h)` for CJK rendering |
+- `context_store`: bounded in-memory working context for the current process.
+- `state_store`: SQLite repository for episodes, beliefs, drives, relationships, intentions, permissions, budgets, chat and MCP metadata.
+- `memory_system`: user-readable SOUL/MEMORY loading, compose, promotion, forgetting and atomic backup.
+- `agent_runtime`: single active intention and event-driven BDI policy.
 
-Adding a new platform = adding one `.c` file that implements these. Nothing
-else in the tree changes.
+SQLite transactions make intention transitions and budgets durable. An expired intention recovered after a crash is failed rather than repeated. A corrupt database is moved to `.corrupt-<timestamp>` before a clean database is created.
 
-## Runtime data flow
+## Process and concurrency model
 
-```
-                 ┌──────────────┐
-   Win32 msgs──▶ │ platform_    │──▶ platform_event ──┐
-                 │ poll_event   │                     │
-                 └──────────────┘                     ▼
-                                            ┌────────────────┐
-                                            │   loop.c       │
-   Lua hooks (on_tick/on_click) ◀──────────│   moyu_app_step │
-         │                                  └────────────────┘
-         ▼                                          │
-   ┌──────────────┐                                 ▼
-   │ moyu.* API   │                          internal events
-   │  emit/say/   │                                 │
-   │  anim/llm    │                                 ▼
-   └──────────────┘                         ┌────────────────┐
-         │                                  │  event_queue   │──▶ anim switch
-         │ sync (blocks Lua)                └────────────────┘──▶ say bubble
-         ▼                                          │
-   ┌──────────────┐                                 ▼
-   │ llm_complete │ ◀──── llm_cache (LRU 64) ──  render frame
-   │  (HTTP POST) │                                 │
-   └──────────────┘                                 ▼
-         │                                  platform_window_set_pixels
-         ▼
-   context_push(CTX_REFLECTION, prompt, response)
-```
+`moyu.exe` owns the pet surface and autonomous runtime. Its Win32 rendering and Lua state remain on the main thread. A single condition-variable worker runs blocking LLM/HTTP work. Completion posts `WM_APP+42`, waking `MsgWaitForMultipleObjectsEx` without polling.
 
-Key properties:
-- **Single thread.** LLM calls are synchronous from the loop's perspective.
-  The UI freezes briefly during an LLM round-trip; this is intentional —
-  the pet is allowed to "think" visibly.
-- **1 Hz tick.** `platform_poll_event` is called with a 1000 ms timeout,
-  which doubles as the idle wake-up. Idle CPU is ~0.
-- **Throttling.** A ring of 128 timestamps tracks LLM calls in a sliding
-  24-hour window; `llm_daily_limit` (default 50) caps total calls.
+`moyu-chat.exe` is a separate console process. It opens the same SQLite database in WAL mode, reloads SOUL/MEMORY, decrypts the same DPAPI secret, and independently connects configured MCP servers. Closing it cannot stop the pet. The pet launches it in a new console on double-click. Each stdio MCP server is a child process; calls are synchronous and explicitly initiated in the TUI.
 
-## State ownership
+## Rendering
 
-All runtime state lives in a single `moyu_app` struct (`loop.h`). No
-globals, no singletons. `main.c` allocates it on the stack, passes
-pointers down, and tears everything down in reverse order at exit.
+The engine keeps RGBA8888 pixels and presents premultiplied BGRA through `UpdateLayeredWindow`. `render_dirty` prevents composition and upload when nothing changed. An animation runs for a short bounded interval and then freezes; idle does not continuously redraw.
 
-## Build outputs
+The builtin 48×48 cream spirit is generated in `procedural.c`; BMP skins remain supported. The window is 160×160 and the 96×96 rendered pet area performs alpha hit testing.
 
-One executable, ~600 KB. Lua 5.4 and cJSON are linked statically. No
-runtime DLLs beyond the OS-provided ones (`winhttp`, `user32`, `gdi32`,
-`shell32`, `ws2_32` on Windows).
+## Platform boundary
+
+`platform.h` remains the only OS abstraction and covers window/events, time, HTTP, filesystem, atomic writes, paths and glyphs. Windows is complete. Linux/macOS implement filesystem/time compatibility plus runtime stubs for the desktop surface.
+
+## Dependencies
+
+- Lua 5.4 sandbox
+- cJSON
+- SQLite 3.53.2 amalgamation
+- Win32 system libraries: User32, GDI32, Shell32, Ole32, Crypt32, WinHTTP, Winsock
+
+No WebView, Electron, Node, Python runtime, curses dependency, GPU framework or external Agent framework is used.

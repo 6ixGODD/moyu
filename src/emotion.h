@@ -6,7 +6,7 @@
 // Emotion is a 2D Russell circumplex approximation:
 //   valence  ∈ [-1, 1]  (negative = sad, positive = happy)
 //   arousal  ∈ [-1, 1]  (low = calm, high = excited)
-// It drifts slowly over time via a biased random walk — non-deterministic.
+// It decays toward the personality baseline and reacts to meaningful events.
 
 typedef struct {
   float valence;
@@ -21,6 +21,7 @@ void emotion_tick(emotion* e,
                   const personality* p,
                   uint64_t now_ms,
                   float dt_seconds);
+void emotion_react(emotion* e, float valence_delta, float arousal_delta);
 
 // Returns an animation id hint based on current emotion (caller may override).
 int emotion_anim_hint(const emotion* e);

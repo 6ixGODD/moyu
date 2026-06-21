@@ -4,8 +4,12 @@
 #include "log.h"
 #include "lua.h"
 #include "lualib.h"
+#include "agent.h"
+#include "memory.h"
 #include "mem.h"
 #include "platform.h"
+#include "state.h"
+#include "tool.h"
 
 #include <string.h>
 
@@ -69,19 +73,7 @@ static int l_say(lua_State* L) {
 static int l_anim(lua_State* L) {
   const char* name = luaL_checkstring(L, 1);
   moyu_app* app = get_app(L);
-  int id = ANIM_IDLE;
-  if (strcmp(name, "idle") == 0)
-    id = ANIM_IDLE;
-  else if (strcmp(name, "blink") == 0)
-    id = ANIM_BLINK;
-  else if (strcmp(name, "sleep") == 0)
-    id = ANIM_SLEEP;
-  else if (strcmp(name, "happy") == 0)
-    id = ANIM_HAPPY;
-  else if (strcmp(name, "sad") == 0)
-    id = ANIM_SAD;
-  else if (strcmp(name, "observe") == 0)
-    id = ANIM_OBSERVE;
+  int id = anim_id_from_name(name);
   moyu_app_emit_anim(app, id);
   return 0;
 }
@@ -105,6 +97,87 @@ static int l_log(lua_State* L) {
   const char* msg = luaL_checkstring(L, 1);
   LOGI("[lua] %s", msg);
   return 0;
+}
+
+static int l_tool(lua_State* L) {
+  const char* name = luaL_checkstring(L, 1);
+  const char* args = luaL_optstring(L, 2, "{}");
+  moyu_app* app = get_app(L);
+  const tool_def* def = tool_registry_find(app->tools, name);
+  if (!def || def->risk == TOOL_MUTATE) {
+    lua_pushnil(L);
+    lua_pushstring(L, def ? "mutating tools require human confirmation"
+                          : "unknown tool");
+    return 2;
+  }
+  if (strcmp(def->source, "builtin") != 0 &&
+      !state_permission_allowed(
+          app->state, def->name, "*", tool_risk_name(def->risk))) {
+    state_add_inbox(app->state,
+                    "request",
+                    "A new sense needs permission",
+                    def->name);
+    lua_pushnil(L);
+    lua_pushstring(L, "permission required");
+    return 2;
+  }
+  char* out = tool_invoke(def, args);
+  if (!out) {
+    lua_pushnil(L);
+    lua_pushstring(L, "tool failed");
+    return 2;
+  }
+  state_add_episode(app->state, "tool", def->name, "{}", 0.35, 0.30);
+  lua_pushstring(L, out);
+  moyu_free(out);
+  return 1;
+}
+
+static int l_beliefs(lua_State* L) {
+  moyu_app* app = get_app(L);
+  char* json = state_relevant_context(app->state, 16);
+  lua_pushstring(L, json);
+  moyu_free(json);
+  return 1;
+}
+
+static int l_intention(lua_State* L) {
+  moyu_app* app = get_app(L);
+  char* json = agent_explain(app->agent);
+  lua_pushstring(L, json);
+  moyu_free(json);
+  return 1;
+}
+
+static int l_propose_memory(lua_State* L) {
+  const char* text = luaL_checkstring(L, 1);
+  moyu_app* app = get_app(L);
+  int64_t id = state_add_episode(
+      app->state, "memory_candidate", text, "{\"src\":\"lua\"}", 0.55, 0.50);
+  bool stored = memory_consider_episode(app->memory,
+                                        id,
+                                        text,
+                                        0.55,
+                                        0.50,
+                                        app->personality.curiosity);
+  lua_pushboolean(L, stored);
+  return 1;
+}
+
+static int l_request_permission(lua_State* L) {
+  const char* tool = luaL_checkstring(L, 1);
+  const char* scope = luaL_optstring(L, 2, "*");
+  moyu_app* app = get_app(L);
+  char body[768];
+  snprintf(body,
+           sizeof(body),
+           "Tool %s would like access to scope %s.",
+           tool,
+           scope);
+  bool ok = state_add_inbox(
+      app->state, "request", "MOYU is asking for permission", body);
+  lua_pushboolean(L, ok);
+  return 1;
 }
 
 // --- Appearance (skin) API -------------------------------------------------
@@ -190,6 +263,12 @@ static void register_moyu_api(lua_State* L) {
       {"anim", l_anim},
       {"llm", l_llm},
       {"log", l_log},
+      {"tool", l_tool},
+      {"beliefs", l_beliefs},
+      {"drives", l_beliefs},
+      {"intention", l_intention},
+      {"propose_memory", l_propose_memory},
+      {"request_permission", l_request_permission},
       {"use_skin_builtin", l_use_skin_builtin},
       {"use_skin_bmp", l_use_skin_bmp},
       {"set_anim", l_set_anim},
@@ -306,4 +385,73 @@ void lua_runtime_call_on_click(moyu_app* app, int button) {
     LOGW("on_click: %s", lua_tostring(L, -1));
     lua_pop(L, 1);
   }
+}
+
+void lua_runtime_call_on_event(moyu_app* app,
+                               const char* event_name,
+                               const char* payload_json) {
+  if (!app || !app->L) return;
+  lua_State* L = app->L;
+  lua_getglobal(L, "on_event");
+  if (!lua_isfunction(L, -1)) {
+    lua_pop(L, 1);
+    return;
+  }
+  lua_pushstring(L, event_name ? event_name : "unknown");
+  lua_pushstring(L, payload_json ? payload_json : "{}");
+  if (lua_pcall(L, 2, 0, 0) != LUA_OK) {
+    LOGW("on_event: %s", lua_tostring(L, -1));
+    lua_pop(L, 1);
+  }
+}
+
+static void call_one_string_hook(moyu_app* app,
+                                 const char* hook,
+                                 const char* value) {
+  if (!app || !app->L) return;
+  lua_State* L = app->L;
+  lua_getglobal(L, hook);
+  if (!lua_isfunction(L, -1)) { lua_pop(L, 1); return; }
+  lua_pushstring(L, value ? value : "{}");
+  if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+    LOGW("%s: %s", hook, lua_tostring(L, -1));
+    lua_pop(L, 1);
+  }
+}
+
+void lua_runtime_call_tool_result(moyu_app* app, const char* result_json) {
+  call_one_string_hook(app, "on_tool_result", result_json);
+}
+
+void lua_runtime_call_memory_candidate(moyu_app* app, const char* summary) {
+  call_one_string_hook(app, "on_memory_candidate", summary);
+}
+
+bool lua_runtime_propose_desire(moyu_app* app,
+                                const char* state_json,
+                                char* goal,
+                                size_t goal_cap,
+                                char* tool,
+                                size_t tool_cap,
+                                char* args_json,
+                                size_t args_cap) {
+  if (!app || !app->L) return false;
+  lua_State* L = app->L;
+  lua_getglobal(L, "propose_desires");
+  if (!lua_isfunction(L, -1)) { lua_pop(L, 1); return false; }
+  lua_pushstring(L, state_json ? state_json : "{}");
+  if (lua_pcall(L, 1, 1, 0) != LUA_OK) {
+    LOGW("propose_desires: %s", lua_tostring(L, -1)); lua_pop(L, 1); return false;
+  }
+  if (!lua_istable(L, -1)) { lua_pop(L, 1); return false; }
+  lua_getfield(L, -1, "goal"); const char* g=lua_tostring(L,-1);
+  lua_getfield(L, -2, "tool"); const char* t=lua_tostring(L,-1);
+  lua_getfield(L, -3, "args"); const char* a=lua_tostring(L,-1);
+  bool ok=g&&*g&&t&&*t;
+  if(ok){snprintf(goal,goal_cap,"%s",g);snprintf(tool,tool_cap,"%s",t);snprintf(args_json,args_cap,"%s",a&&*a?a:"{}");}
+  lua_pop(L,4);
+  if(!ok)return false;
+  lua_getglobal(L,"score_intention");
+  if(lua_isfunction(L,-1)){lua_pushstring(L,goal);lua_pushstring(L,state_json?state_json:"{}");if(lua_pcall(L,2,1,0)==LUA_OK){double score=lua_isnumber(L,-1)?lua_tonumber(L,-1):1.0;lua_pop(L,1);return score>0;}LOGW("score_intention: %s",lua_tostring(L,-1));lua_pop(L,1);}else lua_pop(L,1);
+  return true;
 }

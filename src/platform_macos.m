@@ -9,6 +9,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
+#include <sys/stat.h>
+#include <errno.h>
 #include <time.h>
 #include <unistd.h>
 #include <mach-o/dyld.h>
@@ -17,6 +19,13 @@ uint64_t platform_now_ms(void) {
     struct timeval tv;
     gettimeofday(&tv, NULL);
     return (uint64_t)tv.tv_sec * 1000ULL + (uint64_t)tv.tv_usec / 1000ULL;
+}
+uint64_t platform_unix_ms(void) { return platform_now_ms(); }
+const char* platform_home_dir(void) {
+    const char* v = getenv("MOYU_HOME");
+    if (v && *v) return v;
+    v = getenv("HOME");
+    return (v && *v) ? v : ".";
 }
 
 void platform_sleep_ms(uint32_t ms) {
@@ -65,6 +74,24 @@ bool platform_write_file(const char* path, const void* data, size_t len) {
     fclose(f);
     return wr == len;
 }
+bool platform_file_exists(const char* path) { return access(path, F_OK) == 0; }
+bool platform_remove_file(const char* path) { return unlink(path) == 0; }
+bool platform_move_file(const char* from,const char* to,bool replace){(void)replace;return rename(from,to)==0;}
+bool platform_make_dirs(const char* path) {
+    char buf[4096];
+    if (strlen(path) >= sizeof(buf)) return false;
+    strcpy(buf, path);
+    for (char* p = buf + 1; *p; p++) {
+        if (*p == '/') { *p = 0; mkdir(buf, 0700); *p = '/'; }
+    }
+    return mkdir(buf, 0700) == 0 || errno == EEXIST;
+}
+bool platform_write_file_atomic(const char* path, const void* data, size_t len) {
+    char tmp[4096];
+    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+    if (!platform_write_file(tmp, data, len)) return false;
+    return rename(tmp, path) == 0;
+}
 
 void platform_get_cursor_pos(int* x, int* y) {
     if (x) *x = 0;
@@ -93,6 +120,7 @@ void platform_window_hide(platform_window* w) { (void)w; }
 void platform_window_set_clickable(platform_window* w, int x, int y, int w_, int h_) {
     (void)w; (void)x; (void)y; (void)w_; (void)h_;
 }
+void platform_window_wake(platform_window* w) { (void)w; }
 
 bool platform_poll_event(platform_window* w, platform_event* out, int timeout_ms) {
     (void)w; (void)timeout_ms;
@@ -108,12 +136,15 @@ platform_http_resp platform_http_post_json(const char* url, const char* auth_bea
     r.err = moyu_strdup("macOS HTTP stub: link NSURLSession to enable");
     return r;
 }
+platform_http_resp platform_http_request(const char* method,const char* url,const char* auth,const char* headers,const char* body,const char* content_type,int timeout_ms){(void)method;(void)headers;(void)content_type;return platform_http_post_json(url,auth,body?body:"",timeout_ms);}
 
 void platform_http_resp_free(platform_http_resp* r) {
     if (!r) return;
     if (r->body) moyu_free(r->body);
     if (r->err)  moyu_free(r->err);
-    r->body = NULL; r->err = NULL; r->body_len = 0; r->status = 0;
+    if (r->content_type) moyu_free(r->content_type);
+    if (r->session_id) moyu_free(r->session_id);
+    r->body = NULL; r->err = NULL; r->content_type = NULL; r->session_id = NULL; r->body_len = 0; r->status = 0;
 }
 
 uint8_t* platform_get_glyph(uint32_t codepoint, int pixel_size, int* w, int* h) {

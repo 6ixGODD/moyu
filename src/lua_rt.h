@@ -21,3 +21,16 @@ void lua_runtime_call_on_tick(moyu_app* app,
 
 // Call optional Lua function `on_click(button)`.
 void lua_runtime_call_on_click(moyu_app* app, int button);
+void lua_runtime_call_on_event(moyu_app* app,
+                               const char* event_name,
+                               const char* payload_json);
+bool lua_runtime_propose_desire(moyu_app* app,
+                                const char* state_json,
+                                char* goal,
+                                size_t goal_cap,
+                                char* tool,
+                                size_t tool_cap,
+                                char* args_json,
+                                size_t args_cap);
+void lua_runtime_call_tool_result(moyu_app* app, const char* result_json);
+void lua_runtime_call_memory_candidate(moyu_app* app, const char* summary);

@@ -48,8 +48,11 @@ typedef enum {
   PE_MOUSE_HOVER_ENTER,
   PE_MOUSE_HOVER_LEAVE,
   PE_MOUSE_DOWN,
+  PE_MOUSE_DOUBLE_CLICK,
   PE_MOUSE_UP,
+  PE_DROP_FILE,
   PE_TIMER,  // periodic tick
+  PE_WAKE,   // background worker completion
   PE_QUIT,
 } platform_event_type;
 
@@ -57,6 +60,7 @@ typedef struct {
   platform_event_type type;
   int x, y;    // window-relative coords for mouse events
   int button;  // 0=left,1=right,2=middle
+  char path[4096];
   uint64_t ts_ms;
 } platform_event;
 
@@ -64,9 +68,12 @@ typedef struct {
 bool platform_poll_event(platform_window* w,
                          platform_event* out,
                          int timeout_ms);
+void platform_window_wake(platform_window* w);
 
 // ---------- Time ----------
 uint64_t platform_now_ms(void);
+// Wall clock milliseconds since Unix epoch. Use for persisted timestamps only.
+uint64_t platform_unix_ms(void);
 void platform_sleep_ms(uint32_t ms);
 
 // ---------- HTTP (platform-native HTTPS) ----------
@@ -75,7 +82,17 @@ typedef struct {
   char* body;  // null-terminated; caller frees with platform_http_resp_free
   size_t body_len;
   char* err;  // null-terminated error string, or NULL
+  char* content_type;
+  char* session_id;
 } platform_http_resp;
+
+platform_http_resp platform_http_request(const char* method,
+                                         const char* url,
+                                         const char* auth_bearer,
+                                         const char* extra_headers,
+                                         const char* body,
+                                         const char* content_type,
+                                         int timeout_ms);
 
 // POST JSON with Bearer auth. url must include scheme (https://...).
 // Returns zeroed resp on transport failure with err set.
@@ -91,6 +108,14 @@ const char* platform_exe_dir(void);
 char* platform_read_file(const char* path,
                          size_t* out_len);  // returns NULL on failure
 bool platform_write_file(const char* path, const void* data, size_t len);
+bool platform_write_file_atomic(const char* path, const void* data, size_t len);
+bool platform_file_exists(const char* path);
+bool platform_make_dirs(const char* path);
+bool platform_remove_file(const char* path);
+bool platform_move_file(const char* from, const char* to, bool replace);
+
+// User profile directory in UTF-8. Returned pointer is process-lifetime storage.
+const char* platform_home_dir(void);
 
 // Build a path "<dir>/<name>". Returned string is heap-allocated.
 char* platform_join_path(const char* dir, const char* name);
