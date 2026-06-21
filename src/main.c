@@ -4,6 +4,7 @@
 #include "chat.h"
 #include "builtin.h"
 #include "context.h"
+#include "desktop_os.h"
 #include "emotion.h"
 #include "event.h"
 #include "image.h"
@@ -84,6 +85,39 @@ static bool load_config(const char* path, moyu_app* app) {
     v = cJSON_GetObjectItem(llm, "daily_limit");
     if (v && cJSON_IsNumber(v)) app->llm_daily_limit = v->valueint;
   }
+  cJSON* vision = cJSON_GetObjectItem(root, "vision");
+  if (vision && app->vision_llm) {
+    cJSON* v;
+    v = cJSON_GetObjectItem(vision, "base_url");
+    if (v && cJSON_IsString(v)) {
+      moyu_free(app->vision_llm->base_url);
+      app->vision_llm->base_url = moyu_strdup(v->valuestring);
+    }
+    v = cJSON_GetObjectItem(vision, "api_key");
+    if (v && cJSON_IsString(v)) {
+      moyu_free(app->vision_llm->api_key);
+      app->vision_llm->api_key = moyu_strdup(v->valuestring);
+    }
+    v = cJSON_GetObjectItem(vision, "model");
+    if (v && cJSON_IsString(v)) {
+      moyu_free(app->vision_llm->model);
+      app->vision_llm->model = moyu_strdup(v->valuestring);
+    }
+    v = cJSON_GetObjectItem(vision, "max_tokens");
+    if (v && cJSON_IsNumber(v)) app->vision_llm->max_tokens = v->valueint;
+    v = cJSON_GetObjectItem(vision, "temperature");
+    if (v && cJSON_IsNumber(v))
+      app->vision_llm->temperature = (float)v->valuedouble;
+  }
+  cJSON* owner = cJSON_GetObjectItem(root, "owner");
+  if (owner) {
+    cJSON* v = cJSON_GetObjectItem(owner, "name");
+    if (v && cJSON_IsString(v) && v->valuestring[0])
+      snprintf(app->owner_profile.name, sizeof(app->owner_profile.name), "%s", v->valuestring);
+    v = cJSON_GetObjectItem(owner, "note");
+    if (v && cJSON_IsString(v))
+      snprintf(app->owner_profile.note, sizeof(app->owner_profile.note), "%s", v->valuestring);
+  }
   cJSON* p = cJSON_GetObjectItem(root, "personality");
   if (p) {
     cJSON* v;
@@ -129,6 +163,14 @@ static bool load_config(const char* path, moyu_app* app) {
     cJSON* enabled = cJSON_GetObjectItem(autonomy, "enabled");
     if (enabled && cJSON_IsBool(enabled))
       app->agent->autonomous_enabled = cJSON_IsTrue(enabled);
+  }
+  cJSON* appearance = cJSON_GetObjectItem(root, "appearance");
+  if (appearance) {
+    cJSON* skin = cJSON_GetObjectItem(appearance, "skin");
+    if (skin && cJSON_IsString(skin) && skin->valuestring[0]) {
+      skin_free(&app->sk);
+      skin_init_named(&app->sk, skin->valuestring);
+    }
   }
 
   // MCP servers (dynamic tool loading)
@@ -325,6 +367,10 @@ int main(int argc, char** argv)
   llm_config llm_cfg;
   llm_config_init(&llm_cfg);
   app.llm = &llm_cfg;
+  llm_config vision_cfg;
+  llm_config_init(&vision_cfg);
+  app.vision_llm = &vision_cfg;
+  desktop_os_default_owner_profile(&app.owner_profile);
 
   llm_cache cache;
   llm_cache_init(&cache, 64);
@@ -394,6 +440,11 @@ int main(int argc, char** argv)
       moyu_free(secret);
     }
   }
+  if ((!app.vision_llm->api_key || !app.vision_llm->api_key[0]) &&
+      app.llm->api_key && app.llm->api_key[0]) {
+    moyu_free(app.vision_llm->api_key);
+    app.vision_llm->api_key = moyu_strdup(app.llm->api_key);
+  }
   if (!app.observe_root) {
     app.observe_root = state_meta_get(&state, "observe_root");
     if (app.observe_root)
@@ -415,7 +466,10 @@ int main(int argc, char** argv)
 
   // Determine LLM enabled state
   app.llm_enabled = app.llm->api_key && app.llm->api_key[0];
+  app.vision_enabled = app.vision_llm->api_key && app.vision_llm->api_key[0] &&
+                       app.vision_llm->model && app.vision_llm->model[0];
   if (!app.llm_enabled) LOGI("LLM disabled (empty api_key in config.json)");
+  desktop_os_collect_system_snapshot(&app.system_snapshot);
 
   if (smoke_llm) {
     const char* messages[2] = {
@@ -436,6 +490,7 @@ int main(int argc, char** argv)
     tool_registry_free(&tools);
     llm_cache_free(&cache);
     llm_config_free(&llm_cfg);
+    llm_config_free(&vision_cfg);
     return ok ? 0 : 2;
   }
 
@@ -535,6 +590,7 @@ int main(int argc, char** argv)
   if (app.info_body) moyu_free(app.info_body);
   if (app.last_collection_title) moyu_free(app.last_collection_title);
   if (app.last_collection_body) moyu_free(app.last_collection_body);
+  if (app.pending_drop_title) moyu_free(app.pending_drop_title);
   if (app.observe_root) moyu_free(app.observe_root);
   if (app.L) lua_runtime_destroy(app.L);
   chat_ui_destroy(app.chat);
@@ -555,5 +611,6 @@ int main(int argc, char** argv)
   tool_registry_free(&tools);
   llm_cache_free(&cache);
   llm_config_free(&llm_cfg);
+  llm_config_free(&vision_cfg);
   return rc;
 }

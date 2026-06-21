@@ -12,6 +12,7 @@ MOYU 是一只寄居在桌面的轻量自治生物，也是一套约 1.8 MB 的 
 - **真实 MCP**：支持 stdio 与 Streamable HTTP；动态发现并注册工具。
 - **终端聊天**：双击宠物或右键打开独立 TUI，共享完整记忆与 Runtime，不引入 WebView/Electron。
 - **桌面交互层**：自绘控制面板、收藏反馈卡片、拖放收藏和可拖拽重定位，让 GUI 本身承载互动。
+- **多模态投喂**：文本文件本地预览后交给主模型摘要；图片可交给独立 vision 模型分析。
 - **离线完整**：没有 LLM/MCP 时仍可记忆、收藏、形成习惯和本地项目。
 - **低资源**：事件驱动，LLM 在阻塞 worker 中运行，dirty frame 才重绘。
 
@@ -68,6 +69,8 @@ build\moyu.exe
 额外的桌面交互：
 
 - 把文件或目录拖到桌宠身上，它会把这次投喂记成一条收藏，并给出即时 GUI 反馈。
+- 拖入文本/代码文件时，它会本地读取片段后做摘要，不依赖服务端文件解析。
+- 拖入图片时，如果 `vision` 已配置，会走独立多模态模型分析。
 - 长按并拖动桌宠可以给它换停靠位置。
 - 连续摸它几下会触发不同的情绪反馈，而不只是随机动画。
 
@@ -87,7 +90,7 @@ build\moyu.exe
 
 ## 配置
 
-长期配置位于 `~/.moyu/config.json`，运行时可在 TUI 中通过 `/config`、`/model`、`/baseurl`、`/provider` 查看和修改。API key 不写在配置文件里，而是保存在 `~/.moyu/secrets.dat`，并由 Windows DPAPI 加密。完整示例见 `assets/config.example.json`。
+长期配置位于 `~/.moyu/config.json`，运行时可在 TUI 中通过 `/config`、`/model`、`/baseurl`、`/provider` 查看和修改。API key 不写在配置文件里，而是保存在 `~/.moyu/secrets.dat`，并由 Windows DPAPI 加密。配置现在还支持 `vision`、`owner` 和 `appearance.skin`。完整示例见 `assets/config.example.json`。
 
 stdio MCP：
 

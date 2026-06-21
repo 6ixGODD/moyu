@@ -212,9 +212,11 @@ static void paint_panel(chat_ui* ui, HDC dc){
 static void show_panel(chat_ui* ui, int x, int y) {
   if(!ui||!ui->panel_hwnd)return;
   layout_buttons(ui);
-  SetWindowPos(ui->panel_hwnd,HWND_TOPMOST,x-140,y-12,282,342,SWP_SHOWWINDOW|SWP_NOACTIVATE);
-  SetActiveWindow(ui->panel_hwnd);
+  ui->hover_button = -1;
+  SetWindowPos(ui->panel_hwnd,HWND_TOPMOST,x-140,y-12,282,342,SWP_SHOWWINDOW);
   ShowWindow(ui->panel_hwnd,SW_SHOWNORMAL);
+  SetForegroundWindow(ui->panel_hwnd);
+  SetFocus(ui->panel_hwnd);
   InvalidateRect(ui->panel_hwnd,NULL,TRUE);
 }
 
@@ -260,6 +262,9 @@ static LRESULT CALLBACK panel_wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
   switch(msg){
     case WM_ACTIVATE:
       if(LOWORD(wp)==WA_INACTIVE)ShowWindow(hwnd,SW_HIDE);
+      return 0;
+    case WM_KEYDOWN:
+      if (wp == VK_ESCAPE) { ShowWindow(hwnd, SW_HIDE); return 0; }
       return 0;
     case WM_MOUSEMOVE: {
       int hover=hit_button(ui,GET_X_LPARAM(lp),GET_Y_LPARAM(lp));

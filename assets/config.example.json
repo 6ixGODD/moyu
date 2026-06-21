@@ -9,6 +9,20 @@
     "json_mode": false,
     "daily_limit": 50
   },
+  "vision": {
+    "base_url": "https://api.deepseek.com/v1",
+    "api_key": "",
+    "model": "deepseek-vl2",
+    "max_tokens": 512,
+    "temperature": 0.2
+  },
+  "owner": {
+    "name": "BC",
+    "note": "Building software and likes a companion that notices useful things."
+  },
+  "appearance": {
+    "skin": "cream"
+  },
   "personality": {
     "mood_bias": 0.0,
     "sarcasm": 0.3,

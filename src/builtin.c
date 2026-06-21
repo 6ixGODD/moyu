@@ -2,6 +2,7 @@
 
 #include "agent.h"
 #include "cJSON.h"
+#include "desktop_os.h"
 #include "loop.h"
 #include "memory.h"
 #include "mem.h"
@@ -65,6 +66,10 @@ static char* foreground_app(const char* input,void* user){
 #endif
 }
 
+static char* system_snapshot_tool(const char* input,void* user){
+  (void)input;moyu_app* app=(moyu_app*)user;desktop_os_collect_system_snapshot(&app->system_snapshot);return desktop_os_format_system_snapshot(&app->system_snapshot);
+}
+
 static char* memory_remember_tool(const char* input,void* user){
   moyu_app* app=(moyu_app*)user;char* text=arg_string(input,"text");char* section=arg_string(input,"section");
   bool ok=text&&memory_remember(app->memory,section?section:"## Important episodes",text);
@@ -108,6 +113,16 @@ static char* draft_create(const char* input,void* user){
   char* doc=(char*)moyu_alloc(strlen(title)+strlen(body)+8);sprintf(doc,"# %s\n\n%s\n",title,body);bool ok=platform_write_file_atomic(path,doc,strlen(doc));
   if(ok)moyu_app_emit_info(app,"Draft tucked away",title,3600);
   moyu_free(doc);moyu_free(path);moyu_free(title);moyu_free(body);return ok?json_ok("drafted"):moyu_strdup("{\"ok\":false}");
+}
+
+static char* file_preview_tool(const char* input,void* user){
+  moyu_app* app=(moyu_app*)user;char* path=arg_string(input,"path");if(!path)return moyu_strdup("{\"ok\":false,\"error\":\"path required\"}");
+  if(!state_permission_allowed(app->state,"file.preview_path","*", "observe")){moyu_free(path);return moyu_strdup("{\"ok\":false,\"error\":\"permission required\"}");}
+  t_path_preview p; if(!desktop_os_preview_path(path,&p)){moyu_free(path);return moyu_strdup("{\"ok\":false,\"error\":\"cannot inspect path\"}");}
+  cJSON* o=cJSON_CreateObject();cJSON_AddStringToObject(o,"path",p.path);cJSON_AddStringToObject(o,"title",p.title);cJSON_AddStringToObject(o,"kind",p.kind);
+  cJSON_AddBoolToObject(o,"is_directory",p.is_directory);cJSON_AddBoolToObject(o,"is_textual",p.is_textual);cJSON_AddBoolToObject(o,"is_image",p.is_image);cJSON_AddBoolToObject(o,"is_video",p.is_video);
+  cJSON_AddNumberToObject(o,"size_bytes",(double)p.size_bytes);if(p.excerpt[0])cJSON_AddStringToObject(o,"excerpt",p.excerpt);
+  char* out=cJSON_PrintUnformatted(o);cJSON_Delete(o);moyu_free(path);return out;
 }
 
 #ifdef _WIN32
@@ -160,6 +175,7 @@ void builtin_register_persistent(moyu_app* app){
   add(app,"system.now","Read local date and time.","{\"type\":\"object\"}",TOOL_OBSERVE,"{\"domain\":\"system\",\"senses\":[\"time\"]}",system_now);
   add(app,"system.idle_time","Read user idle time.","{\"type\":\"object\"}",TOOL_OBSERVE,"{\"domain\":\"system\",\"senses\":[\"idle\"]}",system_idle);
   add(app,"system.foreground_app","Read the foreground process name when authorized.","{\"type\":\"object\"}",TOOL_OBSERVE,"{\"domain\":\"system\",\"senses\":[\"activity\"]}",foreground_app);
+  add(app,"system.snapshot","Read CPU, memory, host, IP and local time.","{\"type\":\"object\"}",TOOL_OBSERVE,"{\"domain\":\"system\",\"senses\":[\"telemetry\"]}",system_snapshot_tool);
   add(app,"memory.remember","Store a human-readable long-term memory.","{\"type\":\"object\",\"required\":[\"text\"]}",TOOL_DRAFT,"{\"domain\":\"memory\",\"actions\":[\"remember\"]}",memory_remember_tool);
   add(app,"memory.forget","Forget matching long-term memories.","{\"type\":\"object\",\"required\":[\"query\"]}",TOOL_MUTATE,"{\"domain\":\"memory\",\"actions\":[\"forget\"]}",memory_forget_tool);
   add(app,"collection.add","Add a discovery to MOYU's collection.","{\"type\":\"object\",\"required\":[\"title\",\"body\"]}",TOOL_DRAFT,"{\"domain\":\"collection\",\"actions\":[\"collect\"]}",collection_add);
@@ -171,4 +187,5 @@ void builtin_register_persistent(moyu_app* app){
   add(app,"runtime.explain","Explain the active intention.","{\"type\":\"object\"}",TOOL_OBSERVE,"{\"domain\":\"runtime\"}",runtime_explain);
   add(app,"runtime.cancel_intention","Cancel the active intention.","{\"type\":\"object\"}",TOOL_MUTATE,"{\"domain\":\"runtime\"}",runtime_cancel);
   add(app,"filesystem.observe","Observe metadata in an authorized root.","{\"type\":\"object\",\"properties\":{\"root\":{\"type\":\"string\"}}}",TOOL_OBSERVE,"{\"domain\":\"files\",\"senses\":[\"recency\",\"anomaly\"]}",filesystem_observe);
+  add(app,"file.preview_path","Inspect one dropped file or directory after permission.","{\"type\":\"object\",\"required\":[\"path\"]}",TOOL_OBSERVE,"{\"domain\":\"files\",\"senses\":[\"preview\"]}",file_preview_tool);
 }

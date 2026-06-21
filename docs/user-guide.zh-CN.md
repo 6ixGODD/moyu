@@ -23,6 +23,7 @@ MOYU 现在由两个协作进程组成：
 | 草稿 | 生成只留在本地的 Markdown 草稿，不会自己发布 | `/draft`、`/drafts`、`drafts/` |
 | MCP | 通过 stdio 或 Streamable HTTP 发现和调用外部工具 | `config.json`、`/tools`、`/tool` |
 | LLM 对话 | 把 SOUL、MEMORY 和相关 SQLite 状态组合为上下文，调用当前模型 | 在 `moyu-chat.exe` 里直接输入 |
+| Vision 分析 | 用独立多模态模型查看图片，并把结果回灌给桌宠 | `vision` 配置、拖放图片 |
 | 离线模式 | 没有模型时仍能使用记忆、收藏、草稿、权限和本地状态 | 所有本地斜杠命令 |
 
 这里的“收藏”不是浏览器书签。它是 MOYU 认为值得留下的发现，例如一个奇怪的小项目、一种反复出现的工作习惯，或者你明确让它保存的东西。每条收藏都是普通 Markdown 文件。现在一旦收藏发生变化，MOYU 会把这件事回显到桌面 GUI：弹出反馈卡片，并在控制面板里记住“最近收好的一样东西”。草稿则是尚未发布的候选文本，只能停留在自己的工作目录，必须由人类决定后续用途。
@@ -46,6 +47,8 @@ build\moyu-chat.exe
 额外的桌面交互：
 
 - 把文件或目录拖到桌宠身上，它会把这次投喂写成收藏，并立即给出可视反馈。
+- 拖入文本/代码文件时，它会本地读取片段，再让主模型做摘要，不依赖服务端“文件解析”能力。
+- 拖入图片时，如果 `vision` 已配置，它会调用独立多模态模型分析图片内容。
 - 长按并拖动桌宠，可以给它换一个新的停靠位置。
 - 连续摸它几下会触发不同的情绪反应，而不是永远同一种点按反馈。
 
@@ -95,7 +98,7 @@ build\moyu-chat.exe
   logs/               运行日志
 ```
 
-直接编辑 `SOUL.md` 或 `MEMORY.md` 会影响之后的行为。重启会重新加载两者，`/memory` 会立即重新加载 MEMORY。`config.json` 也是从这里加载的，不会编译进二进制。记忆写入器会拒绝常见密钥、Token 和密码模式，`/apikey` 会把模型密钥写进 `secrets.dat`，由 Windows DPAPI 加密保存。
+直接编辑 `SOUL.md` 或 `MEMORY.md` 会影响之后的行为。重启会重新加载两者，`/memory` 会立即重新加载 MEMORY。`config.json` 也是从这里加载的，不会编译进二进制。记忆写入器会拒绝常见密钥、Token 和密码模式，`/apikey` 会把模型密钥写进 `secrets.dat`，由 Windows DPAPI 加密保存。`config.json` 现在还支持 `vision`、`owner` 和 `appearance.skin`。
 
 ## Agent Runtime 到底在做什么
 

@@ -5,6 +5,7 @@
 #include "mem.h"
 #include "platform.h"
 
+#include <ctype.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -64,6 +65,96 @@ static char* build_body(const llm_config* cfg,
   }
   char* body = cJSON_PrintUnformatted(root);
   cJSON_Delete(root);
+  return body;
+}
+
+static char* detect_mime(const char* path) {
+  const char* ext = strrchr(path ? path : "", '.');
+  if (!ext) return moyu_strdup("image/png");
+#ifdef _WIN32
+  if (_stricmp(ext, ".jpg") == 0 || _stricmp(ext, ".jpeg") == 0) return moyu_strdup("image/jpeg");
+  if (_stricmp(ext, ".webp") == 0) return moyu_strdup("image/webp");
+  if (_stricmp(ext, ".gif") == 0) return moyu_strdup("image/gif");
+  if (_stricmp(ext, ".bmp") == 0) return moyu_strdup("image/bmp");
+#endif
+  return moyu_strdup("image/png");
+}
+
+static char* base64_encode(const unsigned char* data, size_t n) {
+  static const char T[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  size_t out_n = ((n + 2) / 3) * 4;
+  char* out = (char*)moyu_alloc(out_n + 1);
+  size_t i = 0, j = 0;
+  while (i < n) {
+    unsigned a = data[i++];
+    unsigned b = i < n ? data[i++] : 0;
+    unsigned c = i < n ? data[i++] : 0;
+    unsigned v = (a << 16) | (b << 8) | c;
+    out[j++] = T[(v >> 18) & 63];
+    out[j++] = T[(v >> 12) & 63];
+    out[j++] = (i - 1 <= n) ? T[(v >> 6) & 63] : '=';
+    out[j++] = (i <= n) ? T[v & 63] : '=';
+    if (i - 1 > n) out[j - 2] = '=';
+    if (i > n) out[j - 1] = '=';
+  }
+  if (n % 3 == 1) {
+    out[out_n - 1] = '=';
+    out[out_n - 2] = '=';
+  } else if (n % 3 == 2) {
+    out[out_n - 1] = '=';
+  }
+  out[out_n] = 0;
+  return out;
+}
+
+static char* build_image_body(const llm_config* cfg,
+                              const char* system_prompt,
+                              const char* user_prompt,
+                              const char* image_path) {
+  size_t image_n = 0;
+  char* bytes = platform_read_file(image_path, &image_n);
+  if (!bytes || image_n == 0) {
+    if (bytes) moyu_free(bytes);
+    return NULL;
+  }
+  char* mime = detect_mime(image_path);
+  char* b64 = base64_encode((const unsigned char*)bytes, image_n);
+  moyu_free(bytes);
+  size_t url_n = strlen("data:;base64,") + strlen(mime) + strlen(b64) + 1;
+  char* data_url = (char*)moyu_alloc(url_n);
+  snprintf(data_url, url_n, "data:%s;base64,%s", mime, b64);
+
+  cJSON* root = cJSON_CreateObject();
+  cJSON_AddStringToObject(root, "model", cfg->model);
+  cJSON* msgs = cJSON_CreateArray();
+  cJSON* sys = cJSON_CreateObject();
+  cJSON_AddStringToObject(sys, "role", "system");
+  cJSON_AddStringToObject(sys, "content", system_prompt ? system_prompt : "");
+  cJSON_AddItemToArray(msgs, sys);
+
+  cJSON* user = cJSON_CreateObject();
+  cJSON_AddStringToObject(user, "role", "user");
+  cJSON* content = cJSON_CreateArray();
+  cJSON* text = cJSON_CreateObject();
+  cJSON_AddStringToObject(text, "type", "text");
+  cJSON_AddStringToObject(text, "text", user_prompt ? user_prompt : "");
+  cJSON_AddItemToArray(content, text);
+  cJSON* image = cJSON_CreateObject();
+  cJSON_AddStringToObject(image, "type", "image_url");
+  cJSON* image_url = cJSON_AddObjectToObject(image, "image_url");
+  cJSON_AddStringToObject(image_url, "url", data_url);
+  cJSON_AddItemToArray(content, image);
+  cJSON_AddItemToObject(user, "content", content);
+  cJSON_AddItemToArray(msgs, user);
+  cJSON_AddItemToObject(root, "messages", msgs);
+  cJSON_AddNumberToObject(root, "max_tokens", cfg->max_tokens);
+  cJSON_AddNumberToObject(root, "temperature", cfg->temperature);
+  cJSON_AddBoolToObject(root, "stream", 0);
+  char* body = cJSON_PrintUnformatted(root);
+  cJSON_Delete(root);
+  moyu_free(data_url);
+  moyu_free(mime);
+  moyu_free(b64);
   return body;
 }
 
@@ -164,6 +255,57 @@ llm_result llm_complete(llm_config* cfg,
       res.error = moyu_strdup("no content in message");
     }
   }
+  cJSON_Delete(root);
+  platform_http_resp_free(&r);
+  return res;
+}
+
+llm_result llm_complete_with_image(llm_config* cfg,
+                                   const char* system_prompt,
+                                   const char* user_prompt,
+                                   const char* image_path,
+                                   int timeout_ms) {
+  llm_result res = {0};
+  if (!cfg || !cfg->api_key || !cfg->api_key[0] || !image_path) {
+    res.error = moyu_strdup("vision config or image missing");
+    return res;
+  }
+  char* body = build_image_body(cfg, system_prompt, user_prompt, image_path);
+  if (!body) {
+    res.error = moyu_strdup("vision body build failed");
+    return res;
+  }
+  size_t bl = strlen(cfg->base_url);
+  char* url = (char*)moyu_alloc(bl + 32);
+  snprintf(url, bl + 32, "%s%s/chat/completions", cfg->base_url, (cfg->base_url[bl - 1] == '/') ? "" : "");
+  platform_http_resp r = platform_http_post_json(url, cfg->api_key, body, timeout_ms);
+  moyu_free(body);
+  moyu_free(url);
+  res.status = r.status;
+  if (r.err) {
+    res.error = moyu_strdup(r.err);
+    platform_http_resp_free(&r);
+    return res;
+  }
+  if (r.status != 200) {
+    char buf[256];
+    snprintf(buf, sizeof(buf), "HTTP %d: %.*s", r.status, (int)(r.body_len < 200 ? r.body_len : 200), r.body ? r.body : "");
+    res.error = moyu_strdup(buf);
+    platform_http_resp_free(&r);
+    return res;
+  }
+  cJSON* root = cJSON_ParseWithLength(r.body, r.body_len);
+  if (!root) {
+    res.error = moyu_strdup("invalid JSON in vision response");
+    platform_http_resp_free(&r);
+    return res;
+  }
+  cJSON* choices = cJSON_GetObjectItem(root, "choices");
+  cJSON* first = choices && cJSON_IsArray(choices) ? cJSON_GetArrayItem(choices, 0) : NULL;
+  cJSON* message = first ? cJSON_GetObjectItem(first, "message") : NULL;
+  cJSON* content = message ? cJSON_GetObjectItem(message, "content") : NULL;
+  if (content && cJSON_IsString(content) && content->valuestring[0]) res.text = moyu_strdup(content->valuestring);
+  else res.error = moyu_strdup("no content in vision response");
   cJSON_Delete(root);
   platform_http_resp_free(&r);
   return res;

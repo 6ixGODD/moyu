@@ -25,6 +25,7 @@ Implemented capabilities:
 | Drafts | Private Markdown output that cannot publish itself | `/draft`, `/drafts`, `drafts/` |
 | MCP | Discovers and calls tools from stdio and Streamable HTTP servers | `config.json`, `/tools`, `/tool` |
 | LLM chat | Uses SOUL, MEMORY and relevant SQLite context with the configured OpenAI-compatible model | type normally in `moyu-chat.exe` |
+| Vision analysis | Uses a separate multimodal model to inspect dropped images | `vision` config, image drag-and-drop |
 | Offline mode | Memory, collections, drafts, permissions and runtime state remain usable without an LLM | all local slash commands |
 
 Collections are not a browser bookmark folder. They are MOYU's durable findings: for example, an unusual repository, a recurring work pattern, or something the human explicitly asks it to keep. Each item is a readable Markdown file. When a collection changes, MOYU now reflects that back into the desktop GUI through an info card and a remembered "latest kept" line in its control panel. Drafts are proposed text that remains private until a human deliberately uses it elsewhere.
@@ -48,6 +49,8 @@ The desktop creature and the Windows tray icon both expose the same self-drawn c
 Extra GUI interaction:
 
 - Drag a file or folder onto MOYU and it will keep a collection note about that drop, then react visually.
+- Dropped text/code files are previewed locally and then summarized by the main model, so this does not depend on provider-side file parsing support.
+- Dropped images can be analyzed through the separate `vision` model configuration.
 - Hold and drag MOYU to move it to a new perch on the desktop.
 - Repeated pats trigger different emotional feedback instead of the same click loop every time.
 
@@ -97,7 +100,7 @@ Forgetting asks for an explicit `YES`. Calling a mutate-class MCP tool asks for 
   logs/               runtime logs
 ```
 
-Editing `SOUL.md` or `MEMORY.md` changes subsequent sessions. Restart reloads both; `/memory` reloads MEMORY immediately. `config.json` is loaded from this directory at startup, not compiled into the binaries. The memory writer rejects common credential patterns, and `/apikey` stores the LLM key in `secrets.dat` through Windows DPAPI instead of plaintext config.
+Editing `SOUL.md` or `MEMORY.md` changes subsequent sessions. Restart reloads both; `/memory` reloads MEMORY immediately. `config.json` is loaded from this directory at startup, not compiled into the binaries. The memory writer rejects common credential patterns, and `/apikey` stores the LLM key in `secrets.dat` through Windows DPAPI instead of plaintext config. `config.json` now also supports `vision`, `owner`, and `appearance.skin`.
 
 ## MCP and built-in behavior
 

@@ -32,6 +32,11 @@ llm_result llm_complete(llm_config* cfg,
                         const char** messages,
                         size_t n,
                         int timeout_ms);
+llm_result llm_complete_with_image(llm_config* cfg,
+                                   const char* system_prompt,
+                                   const char* user_prompt,
+                                   const char* image_path,
+                                   int timeout_ms);
 #include <stddef.h>
 #include <stdint.h>
 

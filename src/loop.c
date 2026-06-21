@@ -125,19 +125,30 @@ bool moyu_app_request_llm_for(moyu_app* app,
   // relevant durable state, and the current prompt.
   char* ctx_json = context_to_json(&app->ctx, 8);
   char* durable = app->state ? state_relevant_context(app->state, 12) : NULL;
+  desktop_os_collect_system_snapshot(&app->system_snapshot);
+  char* snapshot = desktop_os_format_system_snapshot(&app->system_snapshot);
   state_intention active;
   const char* goal = (app->state && state_load_active_intention(app->state, &active))
                          ? active.goal
                          : "none";
+  char prompt_with_context[4096];
+  snprintf(prompt_with_context,
+           sizeof(prompt_with_context),
+           "OWNER: %s\nOWNER_NOTE: %s\nSYSTEM_SNAPSHOT: %s\nREQUEST: %s",
+           app->owner_profile.name[0] ? app->owner_profile.name : "human",
+           app->owner_profile.note[0] ? app->owner_profile.note : "",
+           snapshot ? snapshot : "{}",
+           prompt ? prompt : "");
   char* composed = app->memory
                        ? memory_compose(app->memory,
                                         goal,
                                         durable ? durable : ctx_json,
-                                        prompt,
+                                        prompt_with_context,
                                         24000)
                        : moyu_strdup(prompt);
   moyu_free(ctx_json);
   if (durable) moyu_free(durable);
+  if (snapshot) moyu_free(snapshot);
 
   const char* system =
       "Follow SOUL.md. You are MOYU, a tiny desktop creature, not a generic "
@@ -179,6 +190,12 @@ static void drain_async(moyu_app* app) {
                         result.error);
       moyu_app_emit_anim(app, ANIM_SAD);
     } else if (result.text && result.text[0]) {
+      if (result.purpose && strcmp(result.purpose, "drop_summary") == 0 &&
+          app->pending_drop_title) {
+        builtin_collection_add_note(
+            app, app->pending_drop_title, result.text, "drag_drop_summary");
+        replace_owned(&app->pending_drop_title, NULL);
+      }
       context_push(&app->ctx,
                    CTX_REFLECTION,
                    result.purpose ? result.purpose : "llm",
@@ -228,10 +245,7 @@ static void handle_platform_event(moyu_app* app, const platform_event* pev) {
       break;
     }
     case PE_MOUSE_DOWN:
-      if (pev->button == 1 && app->chat) {
-        chat_ui_context_menu(app->chat);
-        break;
-      }
+      if (pev->button == 1) break;
       app->mouse_down = true;
       app->mouse_down_x = pev->x;
       app->mouse_down_y = pev->y;
@@ -240,6 +254,10 @@ static void handle_platform_event(moyu_app* app, const platform_event* pev) {
       app->mouse_down_ms = pev->ts_ms;
       break;
     case PE_MOUSE_UP:
+      if (pev->button == 1) {
+        if (app->chat) chat_ui_context_menu(app->chat);
+        break;
+      }
       if (pev->button == 0) {
         bool dragged = app->pet_dragging;
         app->mouse_down = false;
@@ -269,26 +287,61 @@ static void handle_platform_event(moyu_app* app, const platform_event* pev) {
       if (app->chat) chat_ui_show(app->chat);
       break;
     case PE_DROP_FILE: {
-      const char* path = pev->path;
-      if (!path[0]) break;
-      const char* name = strrchr(path, '\\');
-      if (!name) name = strrchr(path, '/');
-      name = name ? name + 1 : path;
-      char title[192];
-      snprintf(title, sizeof(title), "%s", name);
-      char body[768];
-      snprintf(body,
-               sizeof(body),
-               "Fed by human from desktop drop.\nPath: %s\nFeeling: %s",
-               path,
-               mood_label(app));
-      if (builtin_collection_add_note(app, title, body, "drag_drop")) {
-        context_push(&app->ctx, CTX_INTERACTION, "drop_collect", title, NULL);
-        if (app->agent) agent_on_human_event(app->agent, "fed a path to MOYU", path);
-      } else {
-        moyu_app_emit_info(app, "Could not keep it", name, 2400);
+      t_path_preview preview;
+      if (!desktop_os_preview_path(pev->path, &preview)) {
+        moyu_app_emit_info(app, "Could not inspect drop", pev->path, 2400);
         moyu_app_emit_anim(app, ANIM_CONFUSED);
+        break;
       }
+      if (preview.is_directory) {
+        char body[1024];
+        snprintf(body, sizeof(body), "Directory dropped by %s.\nPath: %s\nMood: %s",
+                 app->owner_profile.name, preview.path, mood_label(app));
+        builtin_collection_add_note(app, preview.title, body, "drag_drop_directory");
+      } else if (preview.is_textual && app->llm_enabled && preview.excerpt[0]) {
+        replace_owned(&app->pending_drop_title, preview.title);
+        char prompt[8192];
+        snprintf(prompt,
+                 sizeof(prompt),
+                 "Summarize this dropped file for the owner in 3 short sentences. Mention what it is, any notable risk, and why it may matter.\nFILE: %s\nCONTENT:\n%s",
+                 preview.title,
+                 preview.excerpt);
+        if (!moyu_app_request_llm_for(app, prompt, "drop_summary")) {
+          char body[1024];
+          snprintf(body, sizeof(body), "Text file dropped.\nPath: %s\nPreview:\n%.600s", preview.path, preview.excerpt);
+          builtin_collection_add_note(app, preview.title, body, "drag_drop_text");
+        } else {
+          moyu_app_emit_info(app, "Reading drop", preview.title, 2600);
+        }
+      } else if (preview.is_image && app->vision_enabled) {
+        llm_result vr = llm_complete_with_image(
+            app->vision_llm,
+            "You are MOYU's vision subsystem. Describe the image briefly for a desktop companion.",
+            "Describe what is in this image, mention any notable object, and keep it concise.",
+            preview.path,
+            60000);
+        if (vr.text && vr.text[0]) {
+          builtin_collection_add_note(app, preview.title, vr.text, "drag_drop_image");
+        } else {
+          char body[768];
+          snprintf(body, sizeof(body), "Image dropped.\nPath: %s\nVision failed: %s", preview.path, vr.error ? vr.error : "unknown");
+          builtin_collection_add_note(app, preview.title, body, "drag_drop_image_error");
+          moyu_app_emit_info(app, "Vision could not read it", preview.title, 3000);
+        }
+        llm_result_free(&vr);
+      } else {
+        char body[1024];
+        snprintf(body,
+                 sizeof(body),
+                 "Dropped %s.\nPath: %s\nSize: %llu bytes\nMood: %s",
+                 preview.kind[0] ? preview.kind : "file",
+                 preview.path,
+                 (unsigned long long)preview.size_bytes,
+                 mood_label(app));
+        builtin_collection_add_note(app, preview.title, body, "drag_drop_generic");
+      }
+      context_push(&app->ctx, CTX_INTERACTION, "drop_collect", preview.title, NULL);
+      if (app->agent) agent_on_human_event(app->agent, "fed a path to MOYU", preview.path);
       break;
     }
     default: break;
@@ -431,10 +484,12 @@ static void consider_lua_tick(moyu_app* app, uint64_t now_ms) {
     if (!app->mouse_near) {
       app->mouse_near = true;
       moyu_app_emit_anim(app, ANIM_OBSERVE);
+      moyu_app_emit_info(app, "I noticed you", mood_label(app), 1400);
     }
   } else if (d > 120 && app->mouse_near) {
     app->mouse_near = false;
     moyu_app_emit_anim(app, ANIM_IDLE);
+    app->render_dirty = true;
   }
   (void)prev_d;
 

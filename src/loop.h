@@ -1,5 +1,6 @@
 #pragma once
 #include "context.h"
+#include "desktop_os.h"
 #include "emotion.h"
 #include "event.h"
 #include "persona.h"
@@ -50,6 +51,7 @@ typedef struct moyu_app {
 
   // llm
   struct llm_config* llm;
+  struct llm_config* vision_llm;
   struct llm_cache* cache;
 
   // tools
@@ -104,6 +106,10 @@ typedef struct moyu_app {
   float rare_event_chance;
   int llm_daily_limit;
   bool llm_enabled;  // false if api_key empty
+  bool vision_enabled;
+  t_system_snapshot system_snapshot;
+  t_owner_profile owner_profile;
+  char* pending_drop_title;
 
   bool running;
 } moyu_app;

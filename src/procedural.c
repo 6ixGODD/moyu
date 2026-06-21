@@ -23,15 +23,47 @@
 // Mutable (NOT const — see git history: const-folded colors made the pet
 // invisible under /O2).
 static uint32_t C_BODY, C_OUTLINE, C_DARK, C_Z, C_TEAR, C_BLUSH, C_ACCENT;
+static char g_palette[24];
 
 static uint32_t rgb(uint8_t r, uint8_t g, uint8_t b) {
   return ((uint32_t)r << 24) | ((uint32_t)g << 16) | ((uint32_t)b << 8) | 255u;
 }
 
-static void init_colors(void) {
-  C_BODY = rgb(244, 231, 207);     // warm cream
-  C_OUTLINE = rgb(63, 58, 58);     // soft charcoal
-  C_DARK = rgb(63, 58, 58);        // eyes / mouth
+static void init_colors_named(const char* name) {
+  snprintf(g_palette, sizeof(g_palette), "%s", name ? name : "cream");
+  if (name && strcmp(name, "mint") == 0) {
+    C_BODY = rgb(216, 242, 229);
+    C_OUTLINE = rgb(46, 72, 62);
+    C_DARK = rgb(46, 72, 62);
+    C_Z = rgb(126, 156, 150);
+    C_TEAR = rgb(120, 170, 224);
+    C_BLUSH = rgb(232, 170, 177);
+    C_ACCENT = rgb(122, 174, 152);
+    return;
+  }
+  if (name && strcmp(name, "ink") == 0) {
+    C_BODY = rgb(235, 236, 242);
+    C_OUTLINE = rgb(38, 45, 59);
+    C_DARK = rgb(38, 45, 59);
+    C_Z = rgb(120, 125, 150);
+    C_TEAR = rgb(120, 160, 220);
+    C_BLUSH = rgb(192, 148, 162);
+    C_ACCENT = rgb(149, 162, 191);
+    return;
+  }
+  if (name && strcmp(name, "sunset") == 0) {
+    C_BODY = rgb(248, 221, 205);
+    C_OUTLINE = rgb(92, 55, 52);
+    C_DARK = rgb(92, 55, 52);
+    C_Z = rgb(167, 132, 156);
+    C_TEAR = rgb(136, 183, 231);
+    C_BLUSH = rgb(229, 141, 130);
+    C_ACCENT = rgb(210, 167, 119);
+    return;
+  }
+  C_BODY = rgb(244, 231, 207);
+  C_OUTLINE = rgb(63, 58, 58);
+  C_DARK = rgb(63, 58, 58);
   C_Z = rgb(150, 150, 165);
   C_TEAR = rgb(140, 185, 235);
   C_BLUSH = rgb(232, 160, 160);
@@ -173,7 +205,7 @@ static uint32_t* frame_at(sprite_sheet* s, int i) {
 }
 
 void skin_init_default(skin* sk) {
-  init_colors();
+  init_colors_named(g_palette[0] ? g_palette : "cream");
   memset(sk, 0, sizeof(*sk));
   sk->sheet = make_sheet(44);
 
@@ -283,6 +315,12 @@ void skin_init_default(skin* sk) {
     sk->fps[a] = def_fps[a];
     for (int j = 0; j < def_n[a]; j++) sk->frames[a][j] = def[a][j];
   }
+}
+
+bool skin_init_named(skin* sk, const char* name) {
+  init_colors_named(name);
+  skin_init_default(sk);
+  return true;
 }
 
 void skin_free(skin* sk) {
