@@ -198,7 +198,10 @@ static void draw_codepoint(
     draw_cjk(r, cp, dx, dy, fg);
 }
 
-bubble_rect render_bubble(render_ctx* r, const char* text, int dx, int dy_top) {
+static bubble_rect render_bubble_legacy(render_ctx* r,
+                                        const char* text,
+                                        int dx,
+                                        int dy_top) {
   bubble_rect out = {0, 0, 0, 0};
   if (!text) return out;
   size_t len = strlen(text);
@@ -304,6 +307,112 @@ bubble_rect render_bubble(render_ctx* r, const char* text, int dx, int dy_top) {
   moyu_free(toks);
   moyu_free(line_start);
   moyu_free(line_end);
+  return out;
+}
+
+static void blend_pixel(render_ctx* r, int x, int y, uint32_t src) {
+  if (x < 0 || y < 0 || x >= r->w || y >= r->h) return;
+  uint8_t a = (uint8_t)(src & 0xff);
+  if (!a) return;
+  if (a == 255) {
+    r->buf[y * r->w + x] = src;
+    return;
+  }
+  uint32_t dst = r->buf[y * r->w + x];
+  int inv = 255 - a;
+  uint8_t sr = (uint8_t)(src >> 24), sg = (uint8_t)(src >> 16);
+  uint8_t sb = (uint8_t)(src >> 8);
+  uint8_t dr = (uint8_t)(dst >> 24), dg = (uint8_t)(dst >> 16);
+  uint8_t db = (uint8_t)(dst >> 8), da = (uint8_t)dst;
+  uint8_t rr = (uint8_t)((sr * a + dr * inv) / 255);
+  uint8_t gg = (uint8_t)((sg * a + dg * inv) / 255);
+  uint8_t bb = (uint8_t)((sb * a + db * inv) / 255);
+  uint8_t aa = (uint8_t)(a + da * inv / 255);
+  r->buf[y * r->w + x] = ((uint32_t)rr << 24) | ((uint32_t)gg << 16) |
+                          ((uint32_t)bb << 8) | aa;
+}
+
+static bool inside_pixel_round_rect(int x, int y, int w, int h, int cut) {
+  if (x < 0 || y < 0 || x >= w || y >= h) return false;
+  if (x >= cut && x < w - cut) return true;
+  if (y >= cut && y < h - cut) return true;
+  int cx = x < cut ? cut : w - cut - 1;
+  int cy = y < cut ? cut : h - cut - 1;
+  int ax = x - cx, ay = y - cy;
+  return ax * ax + ay * ay <= cut * cut;
+}
+
+bubble_rect render_bubble(render_ctx* r, const char* text, int dx, int dy_top) {
+  bubble_rect out = {0, 0, 0, 0};
+  if (!r || !text || !text[0]) return out;
+
+  int max_text_w = r->w - 38;
+  if (max_text_w > 210) max_text_w = 210;
+  if (max_text_w < 48) return render_bubble_legacy(r, text, dx, dy_top);
+
+  platform_text_bitmap glyphs = {0};
+  if (!platform_render_text(text, 14, max_text_w, 0x302A26FFu, &glyphs))
+    return render_bubble_legacy(r, text, dx, dy_top);
+
+  const int pad_x = 10, pad_y = 7, tail_h = 7, shadow = 2;
+  int bw = glyphs.w + pad_x * 2;
+  int body_h = glyphs.h + pad_y * 2;
+  int bh = body_h + tail_h + shadow;
+  int bx = dx - bw / 2;
+  if (bx < 3) bx = 3;
+  if (bx + bw + shadow > r->w - 3) bx = r->w - 3 - bw - shadow;
+  int by = dy_top - bh;
+  bool below = false;
+  if (by < 2) {
+    below = true;
+    by = dy_top + 5;
+  }
+
+  const uint32_t shadow_c = 0x4B41382Eu;
+  const uint32_t border = 0x665B50FFu;
+  const uint32_t paper = 0xFFF9EEFFu;
+  const int radius = 7;
+  int body_y = by + (below ? tail_h : 0);
+  for (int y = 0; y < body_h; y++) {
+    for (int x = 0; x < bw; x++) {
+      if (inside_pixel_round_rect(x, y, bw, body_h, radius))
+        blend_pixel(r, bx + x + shadow, body_y + y + shadow, shadow_c);
+    }
+  }
+  for (int y = 0; y < body_h; y++) {
+    for (int x = 0; x < bw; x++) {
+      if (!inside_pixel_round_rect(x, y, bw, body_h, radius)) continue;
+      bool edge = !inside_pixel_round_rect(x - 1, y, bw, body_h, radius) ||
+                  !inside_pixel_round_rect(x + 1, y, bw, body_h, radius) ||
+                  !inside_pixel_round_rect(x, y - 1, bw, body_h, radius) ||
+                  !inside_pixel_round_rect(x, y + 1, bw, body_h, radius);
+      blend_pixel(r, bx + x, body_y + y, edge ? border : paper);
+    }
+  }
+
+  int tail_x = dx;
+  if (tail_x < bx + 12) tail_x = bx + 12;
+  if (tail_x > bx + bw - 13) tail_x = bx + bw - 13;
+  for (int row = 0; row < tail_h; row++) {
+    int half = 4 - row / 2;
+    int yy = below ? body_y - 1 - row : body_y + body_h + row;
+    for (int x = -half; x <= half; x++) {
+      bool edge = x == -half || x == half || row == tail_h - 1;
+      blend_pixel(r, tail_x + x, yy, edge ? border : paper);
+    }
+  }
+
+  int tx = bx + pad_x;
+  int ty = body_y + pad_y;
+  for (int y = 0; y < glyphs.h; y++)
+    for (int x = 0; x < glyphs.w; x++)
+      blend_pixel(r, tx + x, ty + y, glyphs.pixels[y * glyphs.w + x]);
+
+  out.x = bx;
+  out.y = by;
+  out.w = bw + shadow;
+  out.h = bh;
+  platform_text_bitmap_free(&glyphs);
   return out;
 }
 

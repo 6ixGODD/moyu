@@ -30,7 +30,7 @@ SQLite transactions make intention transitions and budgets durable. An expired i
 
 `moyu.exe` owns the pet surface and autonomous runtime. Its Win32 rendering and Lua state remain on the main thread. A single condition-variable worker runs blocking LLM/HTTP work. Completion posts `WM_APP+42`, waking `MsgWaitForMultipleObjectsEx` without polling.
 
-`moyu-chat.exe` is a separate console process. It opens the same SQLite database in WAL mode, reloads SOUL/MEMORY, decrypts the same DPAPI secret, and independently connects configured MCP servers. Closing it cannot stop the pet. The pet launches it in a new console on double-click. Each stdio MCP server is a child process; calls are synchronous and explicitly initiated in the TUI.
+`moyu-chat.exe` is a separate console process. It opens the same SQLite database in WAL mode, reloads SOUL/MEMORY, decrypts the same DPAPI secret, and independently connects configured MCP servers. Closing it cannot stop the pet. The tray's native Windows menu launches it in a new console; double-clicking the pet instead opens the in-process quick prompt. Each stdio MCP server is a child process; calls are synchronous and explicitly initiated in the TUI.
 
 ## Rendering
 

@@ -38,13 +38,15 @@ Run the desktop creature:
 build\moyu.exe
 ```
 
-Double-click the creature, or use the tray icon / native right-click menu and select **Open terminal chat**. You can also start chat directly:
+Double-click the creature to open a compact pixel-style prompt beside it. The prompt is clamped to the active monitor, starts at one text line, grows up to five lines, and then enables its internal scrollbar. Press Enter or the round check button to send; use Shift+Enter for a newline.
+
+For a full session, right-click the tray icon and select **Open Terminal Chat**. You can also start it directly:
 
 ```bat
 build\moyu-chat.exe
 ```
 
-The Windows tray icon exposes a native Windows context menu for system-level actions: open chat, open collections, open `~/.moyu`, view runtime status, pause/resume autonomy, or quit MOYU. Right-clicking the creature itself opens MOYU's richer companion panel, which shows mood, latest keepsake, current thought, and action shortcuts. Speech bubbles and info cards do not take focus.
+The Windows tray icon exposes a native context menu that follows the system light/dark theme. It deliberately keeps only system-level actions: open terminal chat, open collections, or quit MOYU. Right-clicking the creature itself opens MOYU's companion panel. Speech bubbles and info cards do not take focus.
 
 Extra GUI interaction:
 

@@ -153,3 +153,15 @@ uint8_t* platform_get_glyph(uint32_t codepoint, int pixel_size, int* w, int* h) 
     if (h) *h = 0;
     return NULL;  // CJK not supported on macOS stub yet
 }
+
+bool platform_render_text(const char* utf8, int pixel_height, int max_width,
+                          uint32_t rgba, platform_text_bitmap* out) {
+    (void)utf8; (void)pixel_height; (void)max_width; (void)rgba;
+    if (out) memset(out, 0, sizeof(*out));
+    return false;
+}
+void platform_text_bitmap_free(platform_text_bitmap* bitmap) {
+    if (!bitmap) return;
+    if (bitmap->pixels) moyu_free(bitmap->pixels);
+    memset(bitmap, 0, sizeof(*bitmap));
+}

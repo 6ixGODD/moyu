@@ -128,6 +128,21 @@ char* platform_join_path(const char* dir, const char* name);
 // pixel_size is the desired font height in pixels (e.g. 12).
 uint8_t* platform_get_glyph(uint32_t codepoint, int pixel_size, int* w, int* h);
 
+typedef struct {
+  uint32_t* pixels;  // owned RGBA8888 mask; alpha carries glyph coverage
+  int w;
+  int h;
+} platform_text_bitmap;
+
+// Shape and rasterize a complete UTF-8 paragraph with the platform text stack.
+// Rendering the paragraph as one run preserves Unicode shaping and fallback.
+bool platform_render_text(const char* utf8,
+                          int pixel_height,
+                          int max_width,
+                          uint32_t rgba,
+                          platform_text_bitmap* out);
+void platform_text_bitmap_free(platform_text_bitmap* bitmap);
+
 #ifdef __cplusplus
 }
 #endif

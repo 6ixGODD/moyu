@@ -31,7 +31,7 @@ for /f "delims=" %%f in ('dir /b /s "%ROOT%\third_party\lua\*.c"') do set "LUAS=
 
 REM Compile the primary target first. Its dependency objects are then reused by
 REM the small test/reference targets, so clean builds never depend on stale .obj.
-clang-cl /nologo /std:c11 /O2 /D_CRT_SECURE_NO_WARNINGS ^
+clang-cl /nologo /utf-8 /std:c11 /O2 /D_CRT_SECURE_NO_WARNINGS ^
   /W3 /wd4100 /wd4189 /wd4244 /wd4267 /wd4068 ^
   /clang:-Wno-unused-function /clang:-Wno-unused-variable ^
   /DSQLITE_THREADSAFE=1 /DSQLITE_OMIT_LOAD_EXTENSION /DSQLITE_DEFAULT_MEMSTATUS=0 ^
@@ -41,7 +41,7 @@ clang-cl /nologo /std:c11 /O2 /D_CRT_SECURE_NO_WARNINGS ^
   /link /SUBSYSTEM:WINDOWS user32.lib gdi32.lib shell32.lib ole32.lib crypt32.lib ws2_32.lib winhttp.lib
 if errorlevel 1 goto :main_failed
 
-clang-cl /nologo /std:c11 /O2 /D_CRT_SECURE_NO_WARNINGS /W3 /wd4100 /wd4189 /wd4244 /wd4267 ^
+clang-cl /nologo /utf-8 /std:c11 /O2 /D_CRT_SECURE_NO_WARNINGS /W3 /wd4100 /wd4189 /wd4244 /wd4267 ^
   /I"%ROOT%\src" /I"%ROOT%\third_party\cjson" /I"%ROOT%\third_party\sqlite" ^
   "%ROOT%\tools\openchat.c" "%BUILD%\hash.obj" "%BUILD%\log.obj" "%BUILD%\mem.obj" ^
   "%BUILD%\platform_win32.obj" "%BUILD%\workdir.obj" "%BUILD%\state.obj" ^
@@ -54,7 +54,7 @@ for %%K in (1 2 3) do (
   if %%K==1 set "MCPNAME=git"
   if %%K==2 set "MCPNAME=notes"
   if %%K==3 set "MCPNAME=weather"
-  clang-cl /nologo /c /std:c11 /O2 /D_CRT_SECURE_NO_WARNINGS /DSERVER_KIND=%%K ^
+  clang-cl /nologo /utf-8 /c /std:c11 /O2 /D_CRT_SECURE_NO_WARNINGS /DSERVER_KIND=%%K ^
     /W3 /wd4100 /wd4244 /wd4267 ^
     /clang:-Wno-unused-function /clang:-Wno-unused-variable ^
     /I"%ROOT%\third_party\cjson" "%ROOT%\examples\mcp\reference_server.c" ^
@@ -66,7 +66,7 @@ for %%K in (1 2 3) do (
   if errorlevel 1 goto :mcp_failed
 )
 
-clang-cl /nologo /c /std:c11 /O2 /D_CRT_SECURE_NO_WARNINGS ^
+clang-cl /nologo /utf-8 /c /std:c11 /O2 /D_CRT_SECURE_NO_WARNINGS ^
   /W3 /wd4100 /wd4189 /wd4244 /wd4267 ^
   /I"%ROOT%\src" /I"%ROOT%\third_party\cjson" /I"%ROOT%\third_party\sqlite" ^
   "%ROOT%\tests\test_main.c" /Fo:"%BUILD%\test_main.obj"

@@ -858,3 +858,99 @@ uint8_t* platform_get_glyph(uint32_t codepoint,
   DeleteDC(dc);
   return out;
 }
+
+bool platform_render_text(const char* utf8,
+                          int pixel_height,
+                          int max_width,
+                          uint32_t rgba,
+                          platform_text_bitmap* out) {
+  if (!out) return false;
+  ZeroMemory(out, sizeof(*out));
+  if (!utf8 || !utf8[0] || pixel_height <= 0 || max_width <= 0) return false;
+
+  int wide_len = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                                     utf8, -1, NULL, 0);
+  if (wide_len <= 0) return false;
+  wchar_t* wide = (wchar_t*)moyu_alloc((size_t)wide_len * sizeof(wchar_t));
+  MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8, -1, wide, wide_len);
+
+  HDC screen = GetDC(NULL);
+  HDC measure_dc = CreateCompatibleDC(screen);
+  HFONT font = CreateFontW(-pixel_height, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                           DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                           CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
+                           DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+  HGDIOBJ old_font = SelectObject(measure_dc, font);
+  RECT measured = {0, 0, max_width, 0};
+  UINT flags = DT_CALCRECT | DT_WORDBREAK | DT_EDITCONTROL | DT_NOPREFIX;
+  DrawTextW(measure_dc, wide, -1, &measured, flags);
+  int width = measured.right - measured.left;
+  int height = measured.bottom - measured.top;
+  if (width < 1) width = 1;
+  if (height < pixel_height) height = pixel_height;
+  if (width > max_width) width = max_width;
+
+  BITMAPINFO bi;
+  ZeroMemory(&bi, sizeof(bi));
+  bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+  bi.bmiHeader.biWidth = width;
+  bi.bmiHeader.biHeight = -height;
+  bi.bmiHeader.biPlanes = 1;
+  bi.bmiHeader.biBitCount = 32;
+  bi.bmiHeader.biCompression = BI_RGB;
+  void* dib_bits = NULL;
+  HBITMAP dib = CreateDIBSection(screen, &bi, DIB_RGB_COLORS,
+                                 &dib_bits, NULL, 0);
+  HDC draw_dc = CreateCompatibleDC(screen);
+  HGDIOBJ old_dib = dib ? SelectObject(draw_dc, dib) : NULL;
+  HGDIOBJ draw_old_font = draw_dc ? SelectObject(draw_dc, font) : NULL;
+  if (!dib || !draw_dc || !dib_bits) {
+    if (draw_dc) DeleteDC(draw_dc);
+    if (dib) DeleteObject(dib);
+    SelectObject(measure_dc, old_font);
+    DeleteObject(font);
+    DeleteDC(measure_dc);
+    ReleaseDC(NULL, screen);
+    moyu_free(wide);
+    return false;
+  }
+
+  memset(dib_bits, 0, (size_t)width * (size_t)height * 4);
+  SetBkMode(draw_dc, TRANSPARENT);
+  SetTextColor(draw_dc, RGB(255, 255, 255));
+  RECT target = {0, 0, width, height};
+  DrawTextW(draw_dc, wide, -1, &target,
+            DT_WORDBREAK | DT_EDITCONTROL | DT_NOPREFIX);
+
+  uint8_t rr = (uint8_t)((rgba >> 24) & 0xff);
+  uint8_t gg = (uint8_t)((rgba >> 16) & 0xff);
+  uint8_t bb = (uint8_t)((rgba >> 8) & 0xff);
+  uint8_t base_a = (uint8_t)(rgba & 0xff);
+  uint32_t* src = (uint32_t*)dib_bits;
+  out->pixels = (uint32_t*)moyu_alloc((size_t)width * (size_t)height * 4);
+  out->w = width;
+  out->h = height;
+  for (int i = 0; i < width * height; i++) {
+    uint8_t coverage = (uint8_t)(src[i] & 0xff);
+    uint8_t alpha = (uint8_t)((coverage * base_a) / 255);
+    out->pixels[i] = ((uint32_t)rr << 24) | ((uint32_t)gg << 16) |
+                     ((uint32_t)bb << 8) | alpha;
+  }
+
+  SelectObject(draw_dc, draw_old_font);
+  SelectObject(draw_dc, old_dib);
+  DeleteDC(draw_dc);
+  DeleteObject(dib);
+  SelectObject(measure_dc, old_font);
+  DeleteObject(font);
+  DeleteDC(measure_dc);
+  ReleaseDC(NULL, screen);
+  moyu_free(wide);
+  return true;
+}
+
+void platform_text_bitmap_free(platform_text_bitmap* bitmap) {
+  if (!bitmap) return;
+  if (bitmap->pixels) moyu_free(bitmap->pixels);
+  ZeroMemory(bitmap, sizeof(*bitmap));
+}
