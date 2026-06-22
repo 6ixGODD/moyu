@@ -58,6 +58,65 @@ static void replace_owned(char** dst, const char* src) {
   *dst = src ? moyu_strdup(src) : NULL;
 }
 
+static bool utf8_decode_one(const char* s, size_t len, size_t* step) {
+  unsigned char c = (unsigned char)s[0];
+  if (c < 0x80) {
+    *step = 1;
+    return true;
+  }
+  if ((c & 0xE0) == 0xC0 && len >= 2 &&
+      (((unsigned char)s[1] & 0xC0) == 0x80)) {
+    *step = 2;
+    return true;
+  }
+  if ((c & 0xF0) == 0xE0 && len >= 3 &&
+      (((unsigned char)s[1] & 0xC0) == 0x80) &&
+      (((unsigned char)s[2] & 0xC0) == 0x80)) {
+    *step = 3;
+    return true;
+  }
+  if ((c & 0xF8) == 0xF0 && len >= 4 &&
+      (((unsigned char)s[1] & 0xC0) == 0x80) &&
+      (((unsigned char)s[2] & 0xC0) == 0x80) &&
+      (((unsigned char)s[3] & 0xC0) == 0x80)) {
+    *step = 4;
+    return true;
+  }
+  *step = 1;
+  return false;
+}
+
+static char* sanitize_utf8_text(const char* src, size_t max_bytes) {
+  if (!src) return NULL;
+  size_t n = strlen(src);
+  if (n > max_bytes) n = max_bytes;
+  char* out = (char*)moyu_alloc(n * 2 + 1);
+  size_t i = 0, j = 0;
+  while (i < n) {
+    size_t step = 1;
+    unsigned char c = (unsigned char)src[i];
+    if (c < 32 && c != '\n' && c != '\t' && c != '\r') {
+      i++;
+      continue;
+    }
+    if (utf8_decode_one(src + i, n - i, &step)) {
+      memcpy(out + j, src + i, step);
+      j += step;
+      i += step;
+    } else {
+      out[j++] = '?';
+      i++;
+    }
+  }
+  out[j] = 0;
+  return out;
+}
+
+static void replace_owned_clean(char** dst, const char* src, size_t max_bytes) {
+  if (*dst) moyu_free(*dst);
+  *dst = src ? sanitize_utf8_text(src, max_bytes) : NULL;
+}
+
 static const char* mood_label(const moyu_app* app) {
   if (app->pet_dragging) return "being carried";
   if (app->emotion.arousal < -0.25f) return "sleepy";
@@ -68,7 +127,7 @@ static const char* mood_label(const moyu_app* app) {
 
 void moyu_app_emit_say(moyu_app* app, const char* text, int duration_ms) {
   if (app->say_text) moyu_free(app->say_text);
-  app->say_text = text ? moyu_strdup(text) : NULL;
+  app->say_text = text ? sanitize_utf8_text(text, 512) : NULL;
   app->say_until_ms = platform_now_ms() + (uint64_t)duration_ms;
   app->render_dirty = true;
 }
@@ -77,8 +136,8 @@ void moyu_app_emit_info(moyu_app* app,
                         const char* title,
                         const char* body,
                         int duration_ms) {
-  replace_owned(&app->info_title, title);
-  replace_owned(&app->info_body, body);
+  replace_owned_clean(&app->info_title, title, 192);
+  replace_owned_clean(&app->info_body, body, 512);
   app->info_until_ms = platform_now_ms() + (uint64_t)duration_ms;
   app->render_dirty = true;
 }
@@ -86,10 +145,10 @@ void moyu_app_emit_info(moyu_app* app,
 void moyu_app_note_collection(moyu_app* app,
                               const char* title,
                               const char* body) {
-  replace_owned(&app->last_collection_title, title);
-  replace_owned(&app->last_collection_body, body);
+  replace_owned_clean(&app->last_collection_title, title, 192);
+  replace_owned_clean(&app->last_collection_body, body, 512);
   moyu_app_emit_info(app, "Collection updated", title, 5200);
-  moyu_app_emit_say(app, "我把它收好了。", 3600);
+  moyu_app_emit_say(app, "Kept it.", 2600);
   moyu_app_emit_anim(app, ANIM_FOUND);
   emotion_react(&app->emotion, 0.14f, 0.16f);
 }
@@ -271,7 +330,7 @@ static void handle_platform_event(moyu_app* app, const platform_event* pev) {
           app->pat_streak++;
           if (app->pat_streak >= 3) {
             app->pat_streak = 0;
-            moyu_app_emit_say(app, "再摸就要飘起来了。", 3200);
+            moyu_app_emit_say(app, "Easy. I can feel that.", 2800);
             moyu_app_emit_info(app, "Affection spike", "pat pat pat", 2600);
           }
           if (app->agent) agent_on_human_event(app->agent, "touched MOYU", NULL);
@@ -511,7 +570,7 @@ static void consider_lua_tick(moyu_app* app, uint64_t now_ms) {
     if (r < 0.05f) {
       // 5% chance per second after threshold
       static const char* pokes[] = {
-          "你又在摸鱼？", "...", "Zzz", "醒醒", "?", "嗯..."};
+          "Still there?", "...", "Zzz", "Wake up", "?", "Hm."};
       int idx = (int)(r * 1000) % 6;
       (void)idx;
       int pick = (int)(now_ms % 6);

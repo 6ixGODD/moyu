@@ -44,7 +44,7 @@ Double-click the creature, or use the tray icon / native right-click menu and se
 build\moyu-chat.exe
 ```
 
-The desktop creature and the Windows tray icon both expose the same native Windows context menu: open chat, open collections, open `~/.moyu`, view runtime status, pause/resume autonomy, or quit MOYU. Speech bubbles and info cards do not take focus.
+The Windows tray icon exposes a native Windows context menu for system-level actions: open chat, open collections, open `~/.moyu`, view runtime status, pause/resume autonomy, or quit MOYU. Right-clicking the creature itself opens MOYU's richer companion panel, which shows mood, latest keepsake, current thought, and action shortcuts. Speech bubbles and info cards do not take focus.
 
 Extra GUI interaction:
 
@@ -53,6 +53,7 @@ Extra GUI interaction:
 - Dropped images can be analyzed through the separate `vision` model configuration.
 - Hold and drag MOYU to move it to a new perch on the desktop.
 - Repeated pats trigger different emotional feedback instead of the same click loop every time.
+- Mouse-near sensing, drag-state feedback, and the companion panel make the desktop side feel more alive than a static tray utility.
 
 ## Terminal chat
 

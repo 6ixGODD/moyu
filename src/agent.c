@@ -35,7 +35,7 @@ static void complete_observation(agent_runtime* a,const char* result){
   memory_consider_episode(app->memory,ep,summary,0.58,n>80?0.65:0.25,app->personality.curiosity);
   state_update_intention(app->state,a->active_id,"completed",1,summary);a->active_id=0;a->goal[0]=0;strcpy(a->status,"idle");
   emotion_react(&app->emotion, 0.14f, 0.18f);
-  moyu_app_emit_anim(app,ANIM_FOUND);moyu_app_emit_say(app,"捡到一点线索。",2600);
+  moyu_app_emit_anim(app,ANIM_FOUND);moyu_app_emit_say(app,"Found a small clue.",2600);
 }
 
 void agent_tick(agent_runtime* a,uint64_t now_ms,float idle){

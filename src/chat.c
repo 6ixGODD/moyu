@@ -33,6 +33,7 @@ struct chat_ui {
   NOTIFYICONDATAW tray;
   HFONT title_font;
   HFONT body_font;
+  HFONT mono_font;
   RECT buttons[6];
   int hover_button;
 };
@@ -182,13 +183,19 @@ static void perform_action(chat_ui* ui,int cmd){
 }
 
 static void layout_buttons(chat_ui* ui){
-  int x=16,y=96,w=248,h=34,gap=8;
-  for(int i=0;i<6;i++){ui->buttons[i].left=x;ui->buttons[i].top=y+i*(h+gap);ui->buttons[i].right=x+w;ui->buttons[i].bottom=y+i*(h+gap)+h;}
+  int x=18,y=250,w=148,h=38,col_gap=12,row_gap=10;
+  for(int i=0;i<6;i++){
+    int col=i%2,row=i/2;
+    ui->buttons[i].left=x+col*(w+col_gap);
+    ui->buttons[i].top=y+row*(h+row_gap);
+    ui->buttons[i].right=ui->buttons[i].left+w;
+    ui->buttons[i].bottom=ui->buttons[i].top+h;
+  }
 }
 
 static void draw_button(HDC dc, RECT rc, const wchar_t* label, bool hover, HFONT font){
-  HBRUSH fill=CreateSolidBrush(hover?rgb(221,233,216):rgb(245,238,229));
-  HPEN pen=CreatePen(PS_SOLID,1,hover?rgb(111,138,104):rgb(157,142,126));
+  HBRUSH fill=CreateSolidBrush(hover?rgb(229,238,255):rgb(244,239,233));
+  HPEN pen=CreatePen(PS_SOLID,1,hover?rgb(102,131,189):rgb(160,146,129));
   HGDIOBJ oldb=SelectObject(dc,fill), oldp=SelectObject(dc,pen), oldf=SelectObject(dc,font);
   RoundRect(dc,rc.left,rc.top,rc.right,rc.bottom,14,14);
   SetBkMode(dc,TRANSPARENT);SetTextColor(dc,rgb(43,37,31));
@@ -197,40 +204,149 @@ static void draw_button(HDC dc, RECT rc, const wchar_t* label, bool hover, HFONT
   DeleteObject(fill);DeleteObject(pen);
 }
 
+static void draw_chip(HDC dc,
+                      int x,
+                      int y,
+                      int w,
+                      int h,
+                      COLORREF fill_color,
+                      COLORREF line_color,
+                      const wchar_t* text,
+                      HFONT font) {
+  RECT rc = {x, y, x + w, y + h};
+  HBRUSH fill = CreateSolidBrush(fill_color);
+  HPEN pen = CreatePen(PS_SOLID, 1, line_color);
+  HGDIOBJ oldb = SelectObject(dc, fill), oldp = SelectObject(dc, pen),
+          oldf = SelectObject(dc, font);
+  RoundRect(dc, rc.left, rc.top, rc.right, rc.bottom, 14, 14);
+  SetBkMode(dc, TRANSPARENT);
+  SetTextColor(dc, rgb(42, 35, 31));
+  DrawTextW(dc, text, -1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+  SelectObject(dc, oldf);
+  SelectObject(dc, oldp);
+  SelectObject(dc, oldb);
+  DeleteObject(fill);
+  DeleteObject(pen);
+}
+
+static void fill_round_rect(HDC dc,
+                            RECT rc,
+                            COLORREF fill_color,
+                            COLORREF line_color,
+                            int radius) {
+  HBRUSH fill = CreateSolidBrush(fill_color);
+  HPEN pen = CreatePen(PS_SOLID, 1, line_color);
+  HGDIOBJ oldb = SelectObject(dc, fill), oldp = SelectObject(dc, pen);
+  RoundRect(dc, rc.left, rc.top, rc.right, rc.bottom, radius, radius);
+  SelectObject(dc, oldp);
+  SelectObject(dc, oldb);
+  DeleteObject(fill);
+  DeleteObject(pen);
+}
+
+static void draw_section(HDC dc,
+                         RECT rc,
+                         const wchar_t* title,
+                         const wchar_t* body,
+                         HFONT title_font,
+                         HFONT body_font) {
+  fill_round_rect(dc, rc, rgb(246, 242, 236), rgb(226, 216, 205), 18);
+  SetBkMode(dc, TRANSPARENT);
+  SetTextColor(dc, rgb(70, 60, 53));
+  HFONT oldf = (HFONT)SelectObject(dc, title_font);
+  RECT tr = {rc.left + 12, rc.top + 10, rc.right - 12, rc.top + 34};
+  DrawTextW(dc, title, -1, &tr, DT_LEFT | DT_TOP | DT_SINGLELINE);
+  SelectObject(dc, body_font);
+  RECT br = {rc.left + 12, rc.top + 32, rc.right - 12, rc.bottom - 12};
+  DrawTextW(dc, body, -1, &br, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_END_ELLIPSIS);
+  SelectObject(dc, oldf);
+}
+
 static void paint_panel(chat_ui* ui, HDC dc){
   RECT rc;GetClientRect(ui->panel_hwnd,&rc);
-  HBRUSH bg=CreateSolidBrush(rgb(252,248,241));
+  HBRUSH bg=CreateSolidBrush(rgb(248,245,240));
   FillRect(dc,&rc,bg);DeleteObject(bg);
-  HPEN border=CreatePen(PS_SOLID,1,rgb(132,118,102));
+  HPEN border=CreatePen(PS_SOLID,1,rgb(181,170,156));
   HGDIOBJ oldp=SelectObject(dc,border);
-  HBRUSH card=CreateSolidBrush(rgb(246,239,228));
+  HBRUSH card=CreateSolidBrush(rgb(252,249,244));
   HGDIOBJ oldb=SelectObject(dc,card);
-  RoundRect(dc,4,4,rc.right-4,rc.bottom-4,20,20);
+  RoundRect(dc,4,4,rc.right-4,rc.bottom-4,24,24);
   SelectObject(dc,oldb);DeleteObject(card);
 
   SetBkMode(dc,TRANSPARENT);SetTextColor(dc,rgb(40,34,29));
   HFONT oldf=(HFONT)SelectObject(dc,ui->title_font);
-  RECT tr={18,16,264,44};DrawTextW(dc,L"MOYU",-1,&tr,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
+  RECT tr={20,18,230,48};DrawTextW(dc,L"MOYU",-1,&tr,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
   SelectObject(dc,ui->body_font);
-  RECT sr={18,42,264,80};
-  wchar_t summary[256];
-  swprintf(summary,256,L"%ls  |  %ls",ui->app->agent->autonomous_enabled?L"autonomy on":L"autonomy paused",mood_text(ui->app));
-  DrawTextW(dc,summary,-1,&sr,DT_LEFT|DT_TOP|DT_WORDBREAK);
+  draw_chip(dc,
+            250,
+            18,
+            88,
+            28,
+            ui->app->agent->autonomous_enabled ? rgb(225, 239, 225)
+                                                : rgb(240, 228, 220),
+            ui->app->agent->autonomous_enabled ? rgb(115, 149, 111)
+                                                : rgb(167, 129, 113),
+            ui->app->agent->autonomous_enabled ? L"Autonomy on"
+                                                : L"Autonomy off",
+            ui->body_font);
 
-  RECT note={18,64,264,92};
-  const char* last = ui->app->last_collection_title ? ui->app->last_collection_title : "nothing tucked away yet";
+  wchar_t mood_line[96];
+  swprintf(mood_line, 96, L"mood: %ls", mood_text(ui->app));
+  draw_chip(dc, 20, 56, 112, 28, rgb(232, 238, 248), rgb(154, 170, 202), mood_line, ui->body_font);
+  draw_chip(dc,
+            140,
+            56,
+            114,
+            28,
+            ui->app->mouse_near ? rgb(232, 244, 234) : rgb(241, 236, 230),
+            ui->app->mouse_near ? rgb(126, 167, 132) : rgb(185, 171, 152),
+            ui->app->mouse_near ? L"you are close" : L"watching the room",
+            ui->body_font);
+  draw_chip(dc,
+            262,
+            56,
+            76,
+            28,
+            ui->app->pet_dragging ? rgb(255, 236, 214) : rgb(238, 237, 245),
+            ui->app->pet_dragging ? rgb(190, 142, 96) : rgb(165, 161, 190),
+            ui->app->pet_dragging ? L"dragged" : L"settled",
+            ui->body_font);
+
+  const char* last = ui->app->last_collection_title ? ui->app->last_collection_title : "Nothing kept yet.";
+  const char* last_body = ui->app->last_collection_body ? ui->app->last_collection_body : "Drop a file or folder here and MOYU will react to it.";
+  const char* speech = ui->app->say_text ? ui->app->say_text : "Waiting for a nudge.";
   wchar_t* wlast = to_wide(last);
-  DrawTextW(dc,L"Latest kept:",-1,&note,DT_LEFT|DT_TOP|DT_SINGLELINE);
-  RECT nv={102,64,264,92}; DrawTextW(dc,wlast,-1,&nv,DT_LEFT|DT_TOP|DT_WORDBREAK|DT_END_ELLIPSIS);
+  wchar_t* wlast_body = to_wide(last_body);
+  wchar_t* wspeech = to_wide(speech);
+  RECT sec1 = {20, 98, 338, 172};
+  RECT sec2 = {20, 180, 338, 238};
+  draw_section(dc, sec1, L"Latest keepsake", wlast, ui->body_font, ui->body_font);
+  draw_section(dc, sec2, L"Current thought", wspeech, ui->body_font, ui->body_font);
+  moyu_free(wspeech);
   moyu_free(wlast);
 
+  HFONT old_body = (HFONT)SelectObject(dc, ui->mono_font ? ui->mono_font : ui->body_font);
+  SetTextColor(dc, rgb(101, 89, 78));
+  RECT foot = {32, 148, 326, 166};
+  DrawTextW(dc, wlast_body, -1, &foot, DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS);
+  moyu_free(wlast_body);
+  SelectObject(dc, old_body);
+
   static const int ids[6]={MENU_CHAT,MENU_RECENT,MENU_PAUSE,MENU_HOME,MENU_DIAG,MENU_EXIT};
-  static const wchar_t* labels_on[6]={L"Open Terminal Chat",L"Open Collections",L"Pause Autonomy",L"Open MOYU Home",L"Runtime Status",L"Quit MOYU"};
-  static const wchar_t* labels_off[6]={L"Open Terminal Chat",L"Open Collections",L"Resume Autonomy",L"Open MOYU Home",L"Runtime Status",L"Quit MOYU"};
+  static const wchar_t* labels_on[6]={L"Terminal Chat",L"Collections",L"Pause Runtime",L"MOYU Home",L"Runtime Status",L"Quit"};
+  static const wchar_t* labels_off[6]={L"Terminal Chat",L"Collections",L"Resume Runtime",L"MOYU Home",L"Runtime Status",L"Quit"};
   for(int i=0;i<6;i++){
     const wchar_t* label=(ids[i]==MENU_PAUSE&& !ui->app->agent->autonomous_enabled)?labels_off[i]:labels_on[i];
     draw_button(dc,ui->buttons[i],label,ui->hover_button==i,ui->body_font);
   }
+  SetTextColor(dc, rgb(119, 107, 95));
+  SelectObject(dc, ui->body_font);
+  RECT hint = {22, 380, 338, 408};
+  DrawTextW(dc,
+            L"Drag files onto MOYU. Left double-click opens chat. Right click here for the companion panel.",
+            -1,
+            &hint,
+            DT_LEFT | DT_TOP | DT_WORDBREAK);
   SelectObject(dc,oldf);SelectObject(dc,oldp);DeleteObject(border);
 }
 
@@ -238,7 +354,7 @@ static void show_panel(chat_ui* ui, int x, int y) {
   if(!ui||!ui->panel_hwnd)return;
   layout_buttons(ui);
   ui->hover_button = -1;
-  SetWindowPos(ui->panel_hwnd,HWND_TOPMOST,x-140,y-12,282,342,SWP_SHOWWINDOW);
+  SetWindowPos(ui->panel_hwnd,HWND_TOPMOST,x-178,y-18,358,420,SWP_SHOWWINDOW);
   ShowWindow(ui->panel_hwnd,SW_SHOWNORMAL);
   SetForegroundWindow(ui->panel_hwnd);
   SetFocus(ui->panel_hwnd);
@@ -323,15 +439,16 @@ chat_ui* chat_ui_create(moyu_app* app) {
   ui->tray_icon=create_tray_icon();
   ui->title_font=CreateFontW(24,0,0,0,FW_BOLD,0,0,0,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Segoe UI");
   ui->body_font=CreateFontW(16,0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Segoe UI");
+  ui->mono_font=CreateFontW(14,0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,FIXED_PITCH,L"Consolas");
   ui->tray_hwnd = CreateWindowExW(0, TRAY_CLASS, L"moyu-tray", WS_OVERLAPPED, 0, 0, 0, 0, NULL, NULL, GetModuleHandleW(NULL), ui);
   ui->panel_hwnd = CreateWindowExW(WS_EX_TOOLWINDOW|WS_EX_TOPMOST,
                                    PANEL_CLASS,
                                    L"moyu-panel",
                                    WS_POPUP,
-                                   0,0,282,342,
+                                   0,0,358,420,
                                    NULL,NULL,GetModuleHandleW(NULL),ui);
   if(ui->panel_hwnd){
-    HRGN rgn=CreateRoundRectRgn(0,0,282,342,22,22);
+    HRGN rgn=CreateRoundRectRgn(0,0,358,420,26,26);
     SetWindowRgn(ui->panel_hwnd,rgn,TRUE);
   }
   if (ui->tray_hwnd) {
@@ -359,6 +476,7 @@ void chat_ui_destroy(chat_ui* ui) {
   if(ui->tray_icon)DestroyIcon(ui->tray_icon);
   if(ui->title_font)DeleteObject(ui->title_font);
   if(ui->body_font)DeleteObject(ui->body_font);
+  if(ui->mono_font)DeleteObject(ui->mono_font);
   moyu_free(ui);
 }
 
@@ -378,7 +496,7 @@ void chat_ui_append(chat_ui* ui,const char* role,const char* text){(void)ui;(voi
 bool chat_ui_visible(chat_ui* ui){return ui&&ui->chat_process&&WaitForSingleObject(ui->chat_process,0)==WAIT_TIMEOUT;}
 
 void chat_ui_context_menu(chat_ui* ui) {
-  POINT p;GetCursorPos(&p);show_native_menu(ui,p.x,p.y);
+  POINT p;GetCursorPos(&p);show_panel(ui,p.x,p.y);
 }
 
 void chat_ui_onboarding(chat_ui* ui) {
