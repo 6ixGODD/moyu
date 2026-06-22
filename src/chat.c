@@ -189,11 +189,12 @@ static void perform_action(chat_ui* ui,int cmd){
 }
 
 static void layout_buttons(chat_ui* ui){
-  int x=18,y=64,w=228,h=38,row_gap=10;
+  int x=14,y=86,w=112,h=28,col_gap=8,row_gap=8;
   for(int i=0;i<3;i++){
-    ui->buttons[i].left=x;
-    ui->buttons[i].top=y+i*(h+row_gap);
-    ui->buttons[i].right=x+w;
+    int col=i%2,row=i/2;
+    ui->buttons[i].left=x+col*(w+col_gap);
+    ui->buttons[i].top=y+row*(h+row_gap);
+    ui->buttons[i].right=ui->buttons[i].left+w;
     ui->buttons[i].bottom=ui->buttons[i].top+h;
   }
 }
@@ -202,7 +203,7 @@ static void draw_button(HDC dc, RECT rc, const wchar_t* label, bool hover, HFONT
   HBRUSH fill=CreateSolidBrush(hover?rgb(229,238,255):rgb(244,239,233));
   HPEN pen=CreatePen(PS_SOLID,1,hover?rgb(102,131,189):rgb(160,146,129));
   HGDIOBJ oldb=SelectObject(dc,fill), oldp=SelectObject(dc,pen), oldf=SelectObject(dc,font);
-  RoundRect(dc,rc.left,rc.top,rc.right,rc.bottom,14,14);
+  RoundRect(dc,rc.left,rc.top,rc.right,rc.bottom,12,12);
   SetBkMode(dc,TRANSPARENT);SetTextColor(dc,rgb(43,37,31));
   DrawTextW(dc,label,-1,&rc,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
   SelectObject(dc,oldf);SelectObject(dc,oldp);SelectObject(dc,oldb);
@@ -222,12 +223,30 @@ static void paint_panel(chat_ui* ui, HDC dc){
 
   SetBkMode(dc,TRANSPARENT);SetTextColor(dc,rgb(40,34,29));
   HFONT oldf=(HFONT)SelectObject(dc,ui->title_font);
-  RECT tr={18,18,180,48};DrawTextW(dc,L"MOYU",-1,&tr,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
+  RECT tr={14,12,120,34};DrawTextW(dc,L"MOYU",-1,&tr,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
   SelectObject(dc,ui->body_font);
-  RECT mood={18,46,220,64};
+  RECT mood={14,34,150,50};
   wchar_t mood_line[96];
-  swprintf(mood_line, 96, L"%ls", mood_text(ui->app));
+  swprintf(mood_line, 96, L"mood  %ls", mood_text(ui->app));
   DrawTextW(dc,mood_line,-1,&mood,DT_LEFT|DT_TOP|DT_SINGLELINE);
+
+  RECT auto_rc={14,52,170,68};
+  DrawTextW(dc,
+            ui->app->agent->autonomous_enabled ? L"mode  autonomous"
+                                                : L"mode  paused",
+            -1,
+            &auto_rc,
+            DT_LEFT|DT_TOP|DT_SINGLELINE);
+
+  const char* last = ui->app->last_collection_title ? ui->app->last_collection_title : "Nothing kept yet.";
+  wchar_t* wlast = to_wide(last);
+  SetTextColor(dc, rgb(95, 86, 78));
+  RECT last_label={14,70,110,84};
+  RECT last_value={72,70,238,84};
+  DrawTextW(dc,L"last",-1,&last_label,DT_LEFT|DT_TOP|DT_SINGLELINE);
+  DrawTextW(dc,wlast,-1,&last_value,DT_LEFT|DT_TOP|DT_SINGLELINE|DT_END_ELLIPSIS);
+  moyu_free(wlast);
+  SetTextColor(dc,rgb(40,34,29));
 
   static const int ids[3]={PANEL_SPEAK,PANEL_RECENT,PANEL_QUIT};
   static const wchar_t* labels[3]={L"Speak",L"Keepsakes",L"Quit"};
@@ -237,7 +256,7 @@ static void paint_panel(chat_ui* ui, HDC dc){
   }
   SetTextColor(dc, rgb(119, 107, 95));
   SelectObject(dc, ui->body_font);
-  RECT hint = {18, 194, 248, 220};
+  RECT hint = {14, 154, 238, 174};
   DrawTextW(dc,
             L"Double-click to talk. Drag files to feed.",
             -1,
@@ -250,7 +269,7 @@ static void show_panel(chat_ui* ui, int x, int y) {
   if(!ui||!ui->panel_hwnd)return;
   layout_buttons(ui);
   ui->hover_button = -1;
-  SetWindowPos(ui->panel_hwnd,HWND_TOPMOST,x-132,y-14,268,232,SWP_SHOWWINDOW);
+  SetWindowPos(ui->panel_hwnd,HWND_TOPMOST,x-126,y-10,252,182,SWP_SHOWWINDOW);
   ShowWindow(ui->panel_hwnd,SW_SHOWNORMAL);
   SetForegroundWindow(ui->panel_hwnd);
   SetFocus(ui->panel_hwnd);
@@ -393,17 +412,17 @@ chat_ui* chat_ui_create(moyu_app* app) {
   ui->app=app;
   ui->hover_button=-1;
   ui->tray_icon=create_tray_icon();
-  ui->title_font=CreateFontW(24,0,0,0,FW_BOLD,0,0,0,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Segoe UI");
-  ui->body_font=CreateFontW(16,0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Segoe UI");
+  ui->title_font=CreateFontW(18,0,0,0,FW_BOLD,0,0,0,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Segoe UI");
+  ui->body_font=CreateFontW(13,0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Segoe UI");
   ui->tray_hwnd = CreateWindowExW(0, TRAY_CLASS, L"moyu-tray", WS_OVERLAPPED, 0, 0, 0, 0, NULL, NULL, GetModuleHandleW(NULL), ui);
   ui->panel_hwnd = CreateWindowExW(WS_EX_TOOLWINDOW|WS_EX_TOPMOST,
                                    PANEL_CLASS,
                                    L"moyu-panel",
                                    WS_POPUP,
-                                   0,0,268,232,
+                                   0,0,252,182,
                                    NULL,NULL,GetModuleHandleW(NULL),ui);
   if(ui->panel_hwnd){
-    HRGN rgn=CreateRoundRectRgn(0,0,268,232,26,26);
+    HRGN rgn=CreateRoundRectRgn(0,0,252,182,22,22);
     SetWindowRgn(ui->panel_hwnd,rgn,TRUE);
   }
   ui->input_hwnd = CreateWindowExW(WS_EX_TOOLWINDOW|WS_EX_TOPMOST,
@@ -436,8 +455,6 @@ chat_ui* chat_ui_create(moyu_app* app) {
     ui->tray.hIcon = ui->tray_icon;
     wcscpy_s(ui->tray.szTip, 128, L"MOYU");
     Shell_NotifyIconW(NIM_ADD, &ui->tray);
-    ui->tray.uVersion = NOTIFYICON_VERSION_4;
-    Shell_NotifyIconW(NIM_SETVERSION, &ui->tray);
   }
   return ui;
 }
