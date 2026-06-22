@@ -34,7 +34,7 @@ SQLite transactions make intention transitions and budgets durable. An expired i
 
 ## Rendering
 
-The engine keeps RGBA8888 pixels and presents premultiplied BGRA through `UpdateLayeredWindow`. `render_dirty` prevents composition and upload when nothing changed. An animation runs for a short bounded interval and then freezes; idle does not continuously redraw.
+The engine keeps RGBA8888 pixels and presents premultiplied BGRA through `UpdateLayeredWindow`. `render_dirty` prevents composition and upload when nothing changed. The behavior scheduler uses a 20 Hz cadence while walking or dodging and 10 Hz for quiet poses. It chooses from 20 bounded procedural animations and stops uploading unchanged frames.
 
 The builtin 48×48 cream spirit is generated in `procedural.c`; BMP skins remain supported. The window is 160×160 and the 96×96 rendered pet area performs alpha hit testing.
 

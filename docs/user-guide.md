@@ -38,7 +38,7 @@ Run the desktop creature:
 build\moyu.exe
 ```
 
-Double-click the creature to open a compact pixel-style prompt beside it. The prompt is clamped to the active monitor, starts at one text line, grows up to five lines, and then enables its internal scrollbar. Press Enter or the round check button to send; use Shift+Enter for a newline.
+Double-click the creature to open a compact pixel-style prompt beside it. The prompt is clamped to the active monitor, starts at one text line, grows up to five lines, and then enables its internal scrollbar. The native text area retains IME, selection, undo, and clipboard behavior; use the round check button to send.
 
 For a full session, right-click the tray icon and select **Open Terminal Chat**. You can also start it directly:
 
@@ -46,7 +46,9 @@ For a full session, right-click the tray icon and select **Open Terminal Chat**.
 build\moyu-chat.exe
 ```
 
-The Windows tray icon exposes a native context menu that follows the system light/dark theme. It deliberately keeps only system-level actions: open terminal chat, open collections, or quit MOYU. Right-clicking the creature itself opens MOYU's companion panel. Speech bubbles and info cards do not take focus.
+The Windows tray icon exposes a native context menu that follows the system light/dark theme. It deliberately keeps only system-level actions: open terminal chat, open collections, or quit MOYU. Right-clicking the creature opens a native status window with explicit **Talk to MOYU...** and **Open collected items** actions. Speech bubbles and info cards do not take focus or stack on top of each other.
+
+MOYU has 20 built-in procedural actions. Its scheduler combines curiosity, patience, sarcasm, valence, and arousal to choose roaming, sneaking toward the pointer, peeking, boredom, playful feints, stretching, or yawning. Bringing the pointer too close drives it away; a cheeky personality may tease and dodge instead of looking frightened.
 
 Extra GUI interaction:
 

@@ -190,6 +190,34 @@ static void draw_question(uint32_t* f, int frame) {
   put_px(f, x, y + 4, C_ACCENT);
 }
 
+static void draw_dots(uint32_t* f, int frame) {
+  int count = 1 + frame % 3;
+  for (int i = 0; i < count; i++) put_px(f, 36 + i * 3, 12, C_Z);
+}
+
+static void draw_sweat(uint32_t* f, int frame) {
+  int y = 14 + frame % 2;
+  put_px(f, 37, y, C_TEAR);
+  put_px(f, 38, y + 1, C_TEAR);
+  put_px(f, 38, y + 2, C_TEAR);
+}
+
+static void draw_motion(uint32_t* f, bool left) {
+  int x0 = left ? 38 : 6;
+  int dir = left ? 1 : -1;
+  hline(f, x0, x0 + dir * 4, 25, C_Z);
+  hline(f, x0 + dir * 2, x0 + dir * 6, 30, C_Z);
+}
+
+static void shift_frame(uint32_t* f, int dx, int dy) {
+  uint32_t copy[FW * FH];
+  memcpy(copy, f, sizeof(copy));
+  clear_frame(f);
+  for (int y = 0; y < FH; y++)
+    for (int x = 0; x < FW; x++)
+      if (copy[y * FW + x]) put_px(f, x + dx, y + dy, copy[y * FW + x]);
+}
+
 static sprite_sheet make_sheet(int frames) {
   sprite_sheet s;
   s.frame_w = FW;
@@ -207,7 +235,7 @@ static uint32_t* frame_at(sprite_sheet* s, int i) {
 void skin_init_default(skin* sk) {
   init_colors_named(g_palette[0] ? g_palette : "cream");
   memset(sk, 0, sizeof(*sk));
-  sk->sheet = make_sheet(44);
+  sk->sheet = make_sheet(76);
 
   // idle 0..3: gentle bob, neutral
   for (int i = 0; i < 4; i++) {
@@ -227,6 +255,58 @@ void skin_init_default(skin* sk) {
     draw_eyes(f, 0, i == 0 ? 0 : 1, 0);
     draw_mouth(f, 0, 0);
     draw_blush(f, 0);
+  }
+
+  // bored 44..47: slumped, slowly looking around with an ellipsis
+  for (int i = 0; i < 4; i++) {
+    uint32_t* f = frame_at(&sk->sheet, 44 + i); clear_frame(f);
+    draw_body(f, 2, 2); draw_eyes(f, 2, i == 2 ? 1 : 0, i < 2 ? -1 : 1);
+    draw_mouth(f, 2, 2); draw_dots(f, i);
+  }
+  // sneak 48..51: low steps with eyes locked toward the pointer
+  for (int i = 0; i < 4; i++) {
+    uint32_t* f = frame_at(&sk->sheet, 48 + i); clear_frame(f);
+    draw_body(f, 2 - (i % 2), 2); draw_eyes(f, 2 - (i % 2), 0, 1);
+    draw_mouth(f, 2 - (i % 2), i == 3 ? 1 : 0); shift_frame(f, i - 2, 0);
+  }
+  // scared 52..55: recoil with wide mouth and a sweat drop
+  for (int i = 0; i < 4; i++) {
+    uint32_t* f = frame_at(&sk->sheet, 52 + i); clear_frame(f);
+    int yoff = i % 2 ? -3 : 0; draw_body(f, yoff, -1);
+    draw_eyes(f, yoff, 0, 0); draw_mouth(f, yoff, 3); draw_sweat(f, i);
+  }
+  // playful 56..59: feint, grin, and sparkle
+  for (int i = 0; i < 4; i++) {
+    uint32_t* f = frame_at(&sk->sheet, 56 + i); clear_frame(f);
+    int yoff = i < 2 ? -2 : 0; draw_body(f, yoff, 0);
+    draw_eyes(f, yoff, 2, i % 2 ? -1 : 1); draw_mouth(f, yoff, 1);
+    draw_blush(f, yoff); draw_spark(f, i); shift_frame(f, i % 2 ? 2 : -2, 0);
+  }
+  // peek 60..63: lean out and stare without approaching
+  for (int i = 0; i < 4; i++) {
+    uint32_t* f = frame_at(&sk->sheet, 60 + i); clear_frame(f);
+    draw_body(f, 0, 0); draw_eyes(f, 0, 0, -1); draw_mouth(f, 0, 3);
+    shift_frame(f, -4 + (i % 2), 0);
+  }
+  // dodge 64..67: fast lateral evasive steps
+  for (int i = 0; i < 4; i++) {
+    uint32_t* f = frame_at(&sk->sheet, 64 + i); clear_frame(f);
+    draw_body(f, i % 2 ? -2 : 0, 0); draw_eyes(f, i % 2 ? -2 : 0, 0, -1);
+    draw_mouth(f, i % 2 ? -2 : 0, 3); draw_motion(f, true);
+    shift_frame(f, i < 2 ? -4 : 3, 0);
+  }
+  // stretch 68..71: tall inhale followed by a soft squash
+  for (int i = 0; i < 4; i++) {
+    uint32_t* f = frame_at(&sk->sheet, 68 + i); clear_frame(f);
+    int squish = i < 2 ? -2 : 1; int yoff = i < 2 ? -2 : 1;
+    draw_body(f, yoff, squish); draw_eyes(f, yoff, 1, 0);
+    draw_mouth(f, yoff, i == 1 ? 3 : 0);
+  }
+  // yawn 72..75: slow closed-eye yawn
+  for (int i = 0; i < 4; i++) {
+    uint32_t* f = frame_at(&sk->sheet, 72 + i); clear_frame(f);
+    draw_body(f, 1, 1); draw_eyes(f, 1, 1, 0);
+    draw_mouth(f, 1, i == 1 || i == 2 ? 3 : 0);
   }
   // sleep 6..9: closed eyes + Z
   for (int i = 0; i < 4; i++) {
@@ -309,9 +389,14 @@ void skin_init_default(skin* sk) {
       {10, 11, 12, 13}, {14, 15, 16, 17}, {18, 19, 18, 19},
       {20, 21, 22, 23}, {24, 25, 26, 27}, {28, 29, 30, 31},
       {32, 33, 34, 35}, {36, 37, 38, 39}, {40, 41, 42, 43},
+      {44, 45, 46, 47}, {48, 49, 50, 51}, {52, 53, 54, 55},
+      {56, 57, 58, 59}, {60, 61, 62, 63}, {64, 65, 66, 67},
+      {68, 69, 70, 71}, {72, 73, 74, 75},
   };
-  static const int def_fps[ANIM_COUNT] = {2,5,2,6,2,3,4,3,2,6,2,2};
-  static const int def_n[ANIM_COUNT] = {4,4,4,4,4,4,4,4,4,4,4,4};
+  static const int def_fps[ANIM_COUNT] = {
+      2,5,2,6,2,3,4,3,2,6,2,2, 2,5,7,7,3,9,3,2};
+  static const int def_n[ANIM_COUNT] = {
+      4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4};
   for (int a = 0; a < ANIM_COUNT; a++) {
     sk->nframes[a] = def_n[a];
     sk->fps[a] = def_fps[a];
@@ -367,7 +452,9 @@ void skin_set_anim(skin* sk, int anim, const int* frames, int n, int fps) {
 
 static const char* ANIM_NAMES[ANIM_COUNT] = {
     "idle", "blink", "sleep", "happy", "sad", "observe",
-    "walk", "work", "wait", "found", "confused", "giveup"};
+    "walk", "work", "wait", "found", "confused", "giveup",
+    "bored", "sneak", "scared", "playful", "peek", "dodge",
+    "stretch", "yawn"};
 
 int anim_id_from_name(const char* name) {
   if (!name) return ANIM_IDLE;

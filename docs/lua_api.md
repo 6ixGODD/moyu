@@ -55,4 +55,4 @@ moyu.use_skin_bmp(path, frame_w, frame_h)
 moyu.set_anim(name, {frame_indices...}, fps)
 ```
 
-Animation names: idle, blink, sleep, happy, sad, observe, walk, work, wait, found, confused, giveup.
+Animation names: idle, blink, sleep, happy, sad, observe, walk, work, wait, found, confused, giveup, bored, sneak, scared, playful, peek, dodge, stretch, yawn.

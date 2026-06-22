@@ -20,6 +20,8 @@ void render_blit_frame(
 // Integer-scale blit (nearest-neighbor). scale=1 equivalent to render_blit_frame.
 void render_blit_frame_scaled(
     render_ctx* r, const sprite_sheet* s, int frame, int dx, int dy, int scale);
+void render_blit_frame_scaled_flipped(
+    render_ctx* r, const sprite_sheet* s, int frame, int dx, int dy, int scale);
 // Blit with a global alpha modulation (multiplies source alpha).
 void render_blit_frame_alpha(render_ctx* r,
                              const sprite_sheet* s,

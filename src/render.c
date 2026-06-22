@@ -129,3 +129,28 @@ void render_blit_frame_scaled(render_ctx* r,
     }
   }
 }
+
+void render_blit_frame_scaled_flipped(render_ctx* r,
+                                      const sprite_sheet* s,
+                                      int frame,
+                                      int dx,
+                                      int dy,
+                                      int scale) {
+  if (!s || frame < 0 || frame >= s->frame_count || scale < 1) return;
+  const uint32_t* src = sprite_frame(s, frame);
+  for (int y = 0; y < s->frame_h; y++) {
+    for (int x = 0; x < s->frame_w; x++) {
+      uint32_t p = src[y * s->frame_w + x];
+      if ((p & 0xff) == 0) continue;
+      int flipped_x = s->frame_w - 1 - x;
+      for (int sy = 0; sy < scale; sy++) {
+        int ty = dy + y * scale + sy;
+        if (ty < 0 || ty >= r->h) continue;
+        for (int sx = 0; sx < scale; sx++) {
+          int tx = dx + flipped_x * scale + sx;
+          if (tx >= 0 && tx < r->w) r->buf[ty * r->w + tx] = p;
+        }
+      }
+    }
+  }
+}

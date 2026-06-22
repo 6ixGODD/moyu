@@ -51,6 +51,16 @@ static void test_unicode_text_raster(void){
   CHECK(!platform_render_text("\xFF",14,180,0xFFFFFFFFu,&bitmap));
 }
 
+static void test_builtin_animation_library(void){
+  skin sk;skin_init_default(&sk);CHECK(sk.sheet.frame_count==76);
+  for(int anim=0;anim<ANIM_COUNT;anim++){
+    CHECK(sk.nframes[anim]>=2);CHECK(sk.fps[anim]>=2);
+    for(int i=0;i<sk.nframes[anim];i++)CHECK(sk.frames[anim][i]>=0&&sk.frames[anim][i]<sk.sheet.frame_count);
+  }
+  CHECK(!strcmp(anim_name_from_id(ANIM_BORED),"bored"));
+  CHECK(!strcmp(anim_name_from_id(ANIM_DODGE),"dodge"));skin_free(&sk);
+}
+
 static bool dump_skin(const char* path){skin sk;skin_init_default(&sk);int scale=4,w=sk.sheet.frame_w*scale,h=sk.sheet.frame_h*scale,row=(w*3+3)&~3;size_t bytes=54+(size_t)row*h;unsigned char* data=(unsigned char*)calloc(1,bytes);if(!data)return false;data[0]='B';data[1]='M';*(unsigned int*)(data+2)=(unsigned int)bytes;*(unsigned int*)(data+10)=54;*(unsigned int*)(data+14)=40;*(int*)(data+18)=w;*(int*)(data+22)=h;*(unsigned short*)(data+26)=1;*(unsigned short*)(data+28)=24;*(unsigned int*)(data+34)=(unsigned int)(row*h);const uint32_t* px=sprite_frame(&sk.sheet,0);for(int y=0;y<h;y++)for(int x=0;x<w;x++){uint32_t p=px[(y/scale)*sk.sheet.frame_w+x/scale];unsigned char a=(unsigned char)p;unsigned char r=(p>>24)&255,g=(p>>16)&255,b=(p>>8)&255;unsigned char bg=((x/16+y/16)&1)?238:255;if(!a)r=g=b=bg;size_t off=54+(size_t)(h-1-y)*row+x*3;data[off]=b;data[off+1]=g;data[off+2]=r;}FILE* f=fopen(path,"wb");bool ok=f&&fwrite(data,1,bytes,f)==bytes;if(f)fclose(f);free(data);skin_free(&sk);return ok;}
 
-int main(int argc,char** argv){if(argc==3&&!strcmp(argv[1],"--dump-skin"))return dump_skin(argv[2])?0:1;test_state_and_memory();test_mcp_stdio();test_mcp_http();test_unicode_text_raster();if(failures){fprintf(stderr,"%d test(s) failed\n",failures);return 1;}printf("all tests passed\n");return 0;}
+int main(int argc,char** argv){if(argc==3&&!strcmp(argv[1],"--dump-skin"))return dump_skin(argv[2])?0:1;test_state_and_memory();test_mcp_stdio();test_mcp_http();test_unicode_text_raster();test_builtin_animation_library();if(failures){fprintf(stderr,"%d test(s) failed\n",failures);return 1;}printf("all tests passed\n");return 0;}

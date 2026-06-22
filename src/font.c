@@ -423,9 +423,9 @@ bubble_rect render_info_card(render_ctx* r,
                              int dy_top,
                              int max_w) {
   bubble_rect out = {0, 0, 0, 0};
-  if (!title || !title[0]) return out;
+  if (!r || !title || !title[0]) return out;
   if (max_w <= 0) max_w = 176;
-  if (max_w > r->w - 12) max_w = r->w - 12;
+  if (max_w > r->w - 20) max_w = r->w - 20;
   if (max_w < 72) max_w = 72;
 
   char merged[1024];
@@ -433,99 +433,45 @@ bubble_rect render_info_card(render_ctx* r,
     snprintf(merged, sizeof(merged), "%s\n%s", title, body);
   else
     snprintf(merged, sizeof(merged), "%s", title);
+  platform_text_bitmap glyphs = {0};
+  if (!platform_render_text(merged, 13, max_w - 28, 0x302A26FFu, &glyphs))
+    return out;
 
-  size_t len = strlen(merged);
-  typedef struct {
-    int x;
-    uint32_t cp;
-  } tok;
-  tok* toks = (tok*)moyu_alloc((len + 1) * sizeof(tok));
-  int ntok = 0;
-  {
-    size_t i = 0;
-    int x = 0;
-    while (i < len) {
-      uint32_t cp = utf8_next(merged, len, &i);
-      toks[ntok].cp = cp;
-      toks[ntok].x = x;
-      x += char_advance(cp);
-      ntok++;
-    }
-  }
-  int* line_start = (int*)moyu_alloc((ntok + 2) * sizeof(int));
-  int* line_end = (int*)moyu_alloc((ntok + 2) * sizeof(int));
-  int* line_width = (int*)moyu_alloc((ntok + 2) * sizeof(int));
-  int nlines = 0;
-  int i = 0;
-  while (i < ntok) {
-    int start = i;
-    int x = 0;
-    while (i < ntok) {
-      if (toks[i].cp == '\n') {
-        i++;
-        break;
-      }
-      int adv = char_advance(toks[i].cp);
-      if (x + adv > max_w - 18 && i > start) break;
-      x += adv;
-      i++;
-    }
-    line_start[nlines] = start;
-    line_end[nlines] = i;
-    line_width[nlines] = x;
-    nlines++;
-  }
-  int line_h = CJK_PX + 2;
-  int pad = 6;
-  int card_w = 0;
-  for (i = 0; i < nlines; i++)
-    if (line_width[i] > card_w) card_w = line_width[i];
-  card_w += pad * 2 + 10;
-  if (card_w < 92) card_w = 92;
-  int card_h = pad * 2 + nlines * line_h + 4;
+  int pad_x = 12, pad_y = 8, accent_w = 3;
+  int card_w = glyphs.w + pad_x * 2 + accent_w + 5;
+  if (card_w < 108) card_w = 108;
+  int card_h = glyphs.h + pad_y * 2;
   int bx = dx - card_w / 2;
   int by = dy_top - card_h;
   if (bx < 4) bx = 4;
   if (bx + card_w > r->w - 4) bx = r->w - 4 - card_w;
-  if (by < 0) by = 0;
+  if (by < 2) by = 2;
   out.x = bx;
   out.y = by;
   out.w = card_w;
   out.h = card_h;
 
-  uint32_t bg = 0xF9F3EAFFu;
-  uint32_t border = 0x6A5D50FFu;
-  uint32_t accent = 0xA8B89FFFu;
-  uint32_t fg = 0x2C2622FFu;
+  uint32_t bg = 0xFFF9EEFFu;
+  uint32_t border = 0x665B50FFu;
+  uint32_t accent = 0x91A889FFu;
   for (int y = 0; y < card_h; y++) {
     for (int x = 0; x < card_w; x++) {
-      int tx = bx + x;
-      int ty = by + y;
-      if (tx < 0 || ty < 0 || tx >= r->w || ty >= r->h) continue;
-      int rx = x < 5 ? 5 - x : (x >= card_w - 5 ? x - (card_w - 6) : 0);
-      int ry = y < 5 ? 5 - y : (y >= card_h - 5 ? y - (card_h - 6) : 0);
-      if (rx && ry && rx * rx + ry * ry > 25) continue;
-      uint32_t c = bg;
-      if (x == 0 || y == 0 || x == card_w - 1 || y == card_h - 1) c = border;
-      if (x >= 4 && x <= 8 && y >= 5 && y < card_h - 5) c = accent;
-      r->buf[ty * r->w + tx] = c;
+      if (!inside_pixel_round_rect(x, y, card_w, card_h, 6)) continue;
+      bool edge = !inside_pixel_round_rect(x - 1, y, card_w, card_h, 6) ||
+                  !inside_pixel_round_rect(x + 1, y, card_w, card_h, 6) ||
+                  !inside_pixel_round_rect(x, y - 1, card_w, card_h, 6) ||
+                  !inside_pixel_round_rect(x, y + 1, card_w, card_h, 6);
+      uint32_t c = edge ? border : bg;
+      if (!edge && x >= 7 && x < 7 + accent_w && y >= 6 && y < card_h - 6)
+        c = accent;
+      blend_pixel(r, bx + x, by + y, c);
     }
   }
-
-  for (int li = 0; li < nlines; li++) {
-    int tx = bx + pad + 12;
-    int base_y = by + pad + li * line_h;
-    for (int k = line_start[li]; k < line_end[li]; k++) {
-      uint32_t cp = toks[k].cp;
-      int yoff = (cp < 0x80) ? 2 : 0;
-      draw_codepoint(r, cp, tx, base_y + yoff, fg);
-      tx += char_advance(cp);
-    }
-  }
-
-  moyu_free(toks);
-  moyu_free(line_start);
-  moyu_free(line_end);
-  moyu_free(line_width);
+  int tx = bx + pad_x + accent_w + 5;
+  int ty = by + pad_y;
+  for (int y = 0; y < glyphs.h; y++)
+    for (int x = 0; x < glyphs.w; x++)
+      blend_pixel(r, tx + x, ty + y, glyphs.pixels[y * glyphs.w + x]);
+  platform_text_bitmap_free(&glyphs);
   return out;
 }

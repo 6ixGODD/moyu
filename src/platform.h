@@ -40,6 +40,9 @@ void platform_window_set_clickable(
 
 // Get mouse position in screen coordinates (regardless of which window it's over).
 void platform_get_cursor_pos(int* x, int* y);
+// Work area of the monitor nearest the given screen point (taskbar excluded).
+void platform_get_work_area_at(int x, int y, int* left, int* top,
+                               int* width, int* height);
 
 // ---------- Events ----------
 typedef enum {

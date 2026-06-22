@@ -83,6 +83,7 @@ if(WIN32)
         shell32
         ole32
         crypt32
+        advapi32
         ws2_32
     )
 endif()

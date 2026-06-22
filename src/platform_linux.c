@@ -108,6 +108,9 @@ void platform_get_cursor_pos(int* x, int* y) {
   if (y) *y = 0;
   LOGW("platform_get_cursor_pos not implemented on Linux stub");
 }
+void platform_get_work_area_at(int x,int y,int* left,int* top,int* width,int* height){
+  (void)x;(void)y;if(left)*left=0;if(top)*top=0;if(width)*width=1920;if(height)*height=1080;
+}
 
 struct platform_window {
   int dummy;

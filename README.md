@@ -14,6 +14,7 @@ Chinese README: [README.zh-CN.md](README.zh-CN.md)
 - Real MCP: stdio and Streamable HTTP tool discovery are supported.
 - Two chat surfaces: double-click the pet for a compact inline prompt, or open `moyu-chat.exe` from the tray menu for a full terminal session.
 - Desktop interaction: tray icon, native Windows context menu, drag-and-drop intake, hover feedback, and draggable repositioning.
+- Personality-driven motion: 20 built-in actions include roaming, sneaking toward the pointer, boredom, peeking, stretching, yawning, playful feints, fear, and cursor-driven dodging.
 - Multimodal intake: text files are previewed locally and summarized by the main model; images can be analyzed by a separate vision model.
 - Low resource usage: event-driven rendering and blocking model work on a background worker.
 
@@ -58,7 +59,7 @@ On first launch MOYU creates `~/.moyu/`, default SOUL and MEMORY files, a SQLite
 
 Interaction:
 
-- Double-click the pet to open a compact pixel-style prompt beside it. The prompt stays inside the active monitor, grows from one to five lines, then scrolls.
+- Double-click the pet to open a compact pixel-style prompt beside it. The prompt stays inside the active monitor, grows from one to five lines, then scrolls; send with the round check button.
 - Right-click the pet to open a native Windows context menu.
 - Right-click the tray icon for the system-themed native Windows menu and terminal chat entry.
 - Drag a file or folder onto the pet to feed it something to inspect or keep.

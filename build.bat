@@ -38,7 +38,7 @@ clang-cl /nologo /utf-8 /std:c11 /O2 /D_CRT_SECURE_NO_WARNINGS ^
   /I"%ROOT%\src" /I"%ROOT%\third_party\lua" /I"%ROOT%\third_party\cjson" /I"%ROOT%\third_party\sqlite" ^
   %SRCS% %LUAS% "%ROOT%\third_party\cjson\cJSON.c" "%ROOT%\third_party\sqlite\sqlite3.c" ^
   /Fe:"%BUILD%\moyu.exe" /Fo:"%BUILD%\\" ^
-  /link /SUBSYSTEM:WINDOWS user32.lib gdi32.lib shell32.lib ole32.lib crypt32.lib ws2_32.lib winhttp.lib
+  /link /SUBSYSTEM:WINDOWS user32.lib gdi32.lib shell32.lib ole32.lib crypt32.lib advapi32.lib ws2_32.lib winhttp.lib
 if errorlevel 1 goto :main_failed
 
 clang-cl /nologo /utf-8 /std:c11 /O2 /D_CRT_SECURE_NO_WARNINGS /W3 /wd4100 /wd4189 /wd4244 /wd4267 ^

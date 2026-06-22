@@ -180,6 +180,23 @@ void platform_get_cursor_pos(int* x, int* y) {
   if (y) *y = p.y;
 }
 
+void platform_get_work_area_at(int x, int y, int* left, int* top,
+                               int* width, int* height) {
+  POINT point = {x, y};
+  HMONITOR monitor = MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST);
+  MONITORINFO info = {sizeof(info)};
+  if (!GetMonitorInfoW(monitor, &info)) {
+    info.rcWork.left = 0;
+    info.rcWork.top = 0;
+    info.rcWork.right = GetSystemMetrics(SM_CXSCREEN);
+    info.rcWork.bottom = GetSystemMetrics(SM_CYSCREEN);
+  }
+  if (left) *left = info.rcWork.left;
+  if (top) *top = info.rcWork.top;
+  if (width) *width = info.rcWork.right - info.rcWork.left;
+  if (height) *height = info.rcWork.bottom - info.rcWork.top;
+}
+
 // ---------- Window ----------
 struct platform_window {
   HWND hwnd;
@@ -395,7 +412,9 @@ bool platform_poll_event(platform_window* w,
   // First, drain any already-queued messages.
   MSG msg;
   if (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) {
-    // TranslateMessage(&msg);  // we don't care about WM_CHAR
+    // Child controls such as the quick-chat EDIT need translated WM_CHAR
+    // messages. Pet input still consumes the original mouse messages below.
+    TranslateMessage(&msg);
     DispatchMessageW(&msg);
     switch (msg.message) {
       case WM_QUIT: out->type = PE_QUIT; return true;

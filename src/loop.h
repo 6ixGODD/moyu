@@ -30,6 +30,31 @@ struct mcp_client;
 // default 32px skin is clearly visible (32*3 = 96px).
 #define PET_SCALE 2
 
+typedef enum {
+  PET_BEHAVIOR_NONE = 0,
+  PET_BEHAVIOR_ROAM,
+  PET_BEHAVIOR_SNEAK,
+  PET_BEHAVIOR_PEEK,
+  PET_BEHAVIOR_BORED,
+  PET_BEHAVIOR_PLAY,
+  PET_BEHAVIOR_DODGE,
+  PET_BEHAVIOR_STRETCH,
+  PET_BEHAVIOR_YAWN,
+} t_pet_behavior_kind;
+
+typedef struct {
+  t_pet_behavior_kind kind;
+  int anim_id;
+  int target_x;
+  int target_y;
+  float speed_px_s;
+  uint64_t started_ms;
+  uint64_t until_ms;
+  uint64_t next_ms;
+  uint64_t last_step_ms;
+  uint64_t pointer_cooldown_ms;
+} t_pet_behavior;
+
 typedef struct moyu_app {
   // platform
   platform_window* win;
@@ -87,6 +112,8 @@ typedef struct moyu_app {
   uint64_t mouse_down_ms;
   uint64_t last_pat_ms;
   int pat_streak;
+  bool facing_left;
+  t_pet_behavior behavior;
 
   // say bubble
   char* say_text;  // owned

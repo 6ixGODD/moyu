@@ -31,6 +31,165 @@ static int distance_to_pet(moyu_app* app, int mx, int my) {
   return (int)sqrtf((float)(dx * dx + dy * dy));
 }
 
+static uint32_t behavior_random(moyu_app* app) {
+  uint64_t x = app->emotion.rng_state;
+  x ^= x << 13;
+  x ^= x >> 7;
+  x ^= x << 17;
+  app->emotion.rng_state = x;
+  return (uint32_t)(x >> 16);
+}
+
+static int clamp_int(int value, int low, int high) {
+  if (high < low) return low;
+  return value < low ? low : (value > high ? high : value);
+}
+
+static bool behavior_moves(t_pet_behavior_kind kind) {
+  return kind == PET_BEHAVIOR_ROAM || kind == PET_BEHAVIOR_SNEAK ||
+         kind == PET_BEHAVIOR_DODGE;
+}
+
+static void behavior_work_area(moyu_app* app,
+                               int* left, int* top, int* width, int* height) {
+  platform_get_work_area_at(app->pet_x + app->win_w / 2,
+                            app->pet_y + app->win_h / 2,
+                            left, top, width, height);
+}
+
+static void behavior_begin(moyu_app* app,
+                           t_pet_behavior_kind kind,
+                           int anim_id,
+                           int target_x,
+                           int target_y,
+                           float speed,
+                           uint64_t duration_ms,
+                           uint64_t now) {
+  app->behavior.kind = kind;
+  app->behavior.anim_id = anim_id;
+  app->behavior.target_x = target_x;
+  app->behavior.target_y = target_y;
+  app->behavior.speed_px_s = speed;
+  app->behavior.started_ms = now;
+  app->behavior.until_ms = now + duration_ms;
+  app->behavior.last_step_ms = now;
+  if (behavior_moves(kind) && target_x != app->pet_x)
+    app->facing_left = target_x < app->pet_x;
+  moyu_app_emit_anim(app, anim_id);
+  app->anim_until_ms = app->behavior.until_ms;
+}
+
+static void behavior_pick_idle(moyu_app* app, uint64_t now) {
+  int left, top, width, height;
+  behavior_work_area(app, &left, &top, &width, &height);
+  uint32_t roll = behavior_random(app) % 1000;
+  float curiosity = app->personality.curiosity;
+  float sarcasm = app->personality.sarcasm;
+  float patience = app->personality.patience;
+
+  if (app->emotion.arousal < -0.38f || roll < (uint32_t)(70 + 100 * patience)) {
+    behavior_begin(app, PET_BEHAVIOR_YAWN, ANIM_YAWN,
+                   app->pet_x, app->pet_y, 0, 3400, now);
+  } else if (roll < (uint32_t)(190 + 170 * (1.0f - patience))) {
+    behavior_begin(app, PET_BEHAVIOR_BORED, ANIM_BORED,
+                   app->pet_x, app->pet_y, 0, 4200, now);
+  } else if (roll < (uint32_t)(315 + 180 * curiosity)) {
+    int mx, my; platform_get_cursor_pos(&mx, &my);
+    int tx = clamp_int(mx + ((behavior_random(app) & 1) ? 120 : -120),
+                       left, left + width - app->win_w);
+    int ty = clamp_int(my - app->win_h / 2,
+                       top, top + height - app->win_h);
+    behavior_begin(app, PET_BEHAVIOR_SNEAK, ANIM_SNEAK,
+                   tx, ty, 72.0f + curiosity * 38.0f, 6500, now);
+  } else if (roll < (uint32_t)(440 + 160 * curiosity)) {
+    int mx, my; platform_get_cursor_pos(&mx, &my);
+    app->facing_left = mx < app->pet_x + app->win_w / 2;
+    behavior_begin(app, PET_BEHAVIOR_PEEK, ANIM_PEEK,
+                   app->pet_x, app->pet_y, 0, 3600, now);
+  } else if (roll < (uint32_t)(560 + 120 * sarcasm)) {
+    behavior_begin(app, PET_BEHAVIOR_PLAY, ANIM_PLAYFUL,
+                   app->pet_x, app->pet_y, 0, 3200, now);
+  } else if (roll < 720) {
+    behavior_begin(app, PET_BEHAVIOR_STRETCH, ANIM_STRETCH,
+                   app->pet_x, app->pet_y, 0, 3300, now);
+  } else {
+    int tx = left + (int)(behavior_random(app) %
+        (uint32_t)(width > app->win_w ? width - app->win_w : 1));
+    int ty = top + (int)(behavior_random(app) %
+        (uint32_t)(height > app->win_h ? height - app->win_h : 1));
+    behavior_begin(app, PET_BEHAVIOR_ROAM, ANIM_WALK,
+                   tx, ty, 82.0f + app->emotion.arousal * 18.0f, 8000, now);
+  }
+}
+
+static void behavior_react_to_pointer(moyu_app* app,
+                                      int mx,
+                                      int my,
+                                      uint64_t now) {
+  if (now < app->behavior.pointer_cooldown_ms || app->mouse_down ||
+      app->pet_dragging) return;
+  int d = distance_to_pet(app, mx, my);
+  if (d > 66) return;
+
+  int left, top, width, height;
+  behavior_work_area(app, &left, &top, &width, &height);
+  int center_x = app->pet_x + app->win_w / 2;
+  int center_y = app->pet_y + app->win_h - 52;
+  float dx = (float)(center_x - mx), dy = (float)(center_y - my);
+  float len = sqrtf(dx * dx + dy * dy);
+  if (len < 1.0f) { dx = (behavior_random(app) & 1) ? 1.0f : -1.0f; dy = -0.3f; len = 1.0f; }
+  int tx = app->pet_x + (int)(dx / len * 150.0f);
+  int ty = app->pet_y + (int)(dy / len * 95.0f);
+  tx = clamp_int(tx, left, left + width - app->win_w);
+  ty = clamp_int(ty, top, top + height - app->win_h);
+
+  bool cheeky = app->personality.sarcasm + app->emotion.valence > 0.72f;
+  behavior_begin(app, PET_BEHAVIOR_DODGE,
+                 cheeky ? ANIM_PLAYFUL : ANIM_SCARED,
+                 tx, ty, cheeky ? 235.0f : 270.0f, 1300, now);
+  app->behavior.pointer_cooldown_ms = now + 1100;
+  emotion_react(&app->emotion, cheeky ? 0.04f : -0.05f, 0.18f);
+}
+
+static void update_behavior(moyu_app* app, uint64_t now) {
+  if (app->pet_dragging || app->mouse_down) return;
+  int mx, my; platform_get_cursor_pos(&mx, &my);
+  behavior_react_to_pointer(app, mx, my, now);
+
+  t_pet_behavior* b = &app->behavior;
+  if (b->kind != PET_BEHAVIOR_NONE && now >= b->until_ms) {
+    b->kind = PET_BEHAVIOR_NONE;
+    b->next_ms = now + 2400 + behavior_random(app) % 5200;
+    moyu_app_emit_anim(app, emotion_anim_hint(&app->emotion));
+  }
+  if (b->kind == PET_BEHAVIOR_NONE) {
+    if (now >= b->next_ms) behavior_pick_idle(app, now);
+    return;
+  }
+
+  if (app->current_anim != b->anim_id) {
+    moyu_app_emit_anim(app, b->anim_id);
+    app->anim_until_ms = b->until_ms;
+  }
+  if (!behavior_moves(b->kind)) return;
+
+  float dt = (float)(now - b->last_step_ms) / 1000.0f;
+  if (dt > 0.12f) dt = 0.12f;
+  b->last_step_ms = now;
+  float dx = (float)(b->target_x - app->pet_x);
+  float dy = (float)(b->target_y - app->pet_y);
+  float distance = sqrtf(dx * dx + dy * dy);
+  if (distance < 2.0f) {
+    b->until_ms = now;
+    return;
+  }
+  float step = b->speed_px_s * dt;
+  if (step > distance) step = distance;
+  app->pet_x += (int)roundf(dx / distance * step);
+  app->pet_y += (int)roundf(dy / distance * step);
+  platform_window_move(app->win, app->pet_x, app->pet_y);
+}
+
 static void track_llm_call(moyu_app* app) {
   uint64_t now = platform_now_ms();
   app->llm_calls[app->llm_calls_head] = now;
@@ -314,6 +473,8 @@ static void handle_platform_event(moyu_app* app, const platform_event* pev) {
     }
     case PE_MOUSE_DOWN:
       if (pev->button == 1) break;
+      app->behavior.kind = PET_BEHAVIOR_NONE;
+      app->behavior.next_ms = pev->ts_ms + 3000;
       app->mouse_down = true;
       app->mouse_down_x = pev->x;
       app->mouse_down_y = pev->y;
@@ -509,16 +670,22 @@ static void render_frame(moyu_app* app) {
   int sheet_frame = (n > 0)
                         ? app->sk.frames[anim][app->current_frame % n]
                         : 0;
-  render_blit_frame_scaled(
-      &app->render, &app->sk.sheet, sheet_frame, pet_dx, pet_dy, scale);
-  if (app->info_title && platform_now_ms() < app->info_until_ms) {
+  if (app->facing_left)
+    render_blit_frame_scaled_flipped(
+        &app->render, &app->sk.sheet, sheet_frame, pet_dx, pet_dy, scale);
+  else
+    render_blit_frame_scaled(
+        &app->render, &app->sk.sheet, sheet_frame, pet_dx, pet_dy, scale);
+  uint64_t render_now = platform_now_ms();
+  bool has_speech = app->say_text && render_now < app->say_until_ms;
+  if (!has_speech && app->info_title && render_now < app->info_until_ms) {
     render_info_card(&app->render,
                      app->info_title,
                      app->info_body,
                      app->win_w / 2,
                      pet_dy - 6,
                      app->win_w - 18);
-  } else if (app->mouse_near && app->last_collection_title) {
+  } else if (!has_speech && app->mouse_near && app->last_collection_title) {
     render_info_card(&app->render,
                      app->last_collection_title,
                      mood_label(app),
@@ -526,7 +693,7 @@ static void render_frame(moyu_app* app) {
                      pet_dy - 8,
                      app->win_w - 28);
   }
-  if (app->say_text && platform_now_ms() < app->say_until_ms) {
+  if (has_speech) {
     render_bubble(&app->render, app->say_text, app->win_w / 2, pet_dy - 2);
   } else if (app->say_text) {
     moyu_free(app->say_text);
@@ -556,10 +723,10 @@ static void consider_lua_tick(moyu_app* app, uint64_t now_ms) {
   int prev_d = app->last_mouse_distance;
   app->last_mouse_distance = d;
   if (d < 60) {
+    app->facing_left = mx < app->pet_x + app->win_w / 2;
     if (!app->mouse_near) {
       app->mouse_near = true;
-      moyu_app_emit_anim(app, ANIM_OBSERVE);
-      moyu_app_emit_info(app, "I noticed you", mood_label(app), 1400);
+      moyu_app_emit_anim(app, ANIM_PEEK);
     }
   } else if (d > 120 && app->mouse_near) {
     app->mouse_near = false;
@@ -612,8 +779,9 @@ static void consider_lua_tick(moyu_app* app, uint64_t now_ms) {
 bool moyu_app_step(moyu_app* app) {
   if (!app->running) return false;
   platform_event pev;
-  // 1Hz tick via 1000ms timeout; events come back sooner if there's input
-  bool got = platform_poll_event(app->win, &pev, 1000);
+  // Moving behaviors get a smooth 20 Hz cadence; quiet poses use 10 Hz.
+  int poll_ms = behavior_moves(app->behavior.kind) ? 50 : 100;
+  bool got = platform_poll_event(app->win, &pev, poll_ms);
   if (got) handle_platform_event(app, &pev);
   drain_async(app);
 
@@ -629,6 +797,7 @@ bool moyu_app_step(moyu_app* app) {
   if (app->say_text && now >= app->say_until_ms) app->render_dirty = true;
   if (app->info_title && now >= app->info_until_ms) app->render_dirty = true;
   consider_lua_tick(app, now);
+  update_behavior(app, now);
   update_animation(app, now);
   render_frame(app);
 
@@ -639,6 +808,9 @@ int moyu_app_run(moyu_app* app) {
   app->running = true;
   app->last_mouse_move_ms = platform_now_ms();
   app->last_tick_ms = 0;
+  app->behavior.kind = PET_BEHAVIOR_NONE;
+  app->behavior.next_ms = app->last_mouse_move_ms + 1800;
+  app->behavior.pointer_cooldown_ms = app->last_mouse_move_ms + 1200;
   app->render_dirty = true;
   app->presented_sheet_frame = -1;
   platform_window_show(app->win);
