@@ -135,3 +135,4 @@ bool moyu_app_request_llm(moyu_app* app,
 bool moyu_app_request_llm_for(moyu_app* app,
                               const char* prompt,
                               const char* purpose);
+bool moyu_app_send_chat(moyu_app* app, const char* text);

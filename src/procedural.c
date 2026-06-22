@@ -258,7 +258,9 @@ void skin_init_default(skin* sk) {
   // work 24..27
   for (int i = 0; i < 4; i++) {
     uint32_t* f = frame_at(&sk->sheet, 24 + i); clear_frame(f);
-    draw_body(f, 0, 0); draw_eyes(f, 0, i % 2, 0); draw_mouth(f, 0, 0);
+    int yoff = (i % 2) ? -1 : 0;
+    draw_body(f, yoff, 0); draw_eyes(f, yoff, i % 2, 0);
+    draw_mouth(f, yoff, (i == 1 || i == 2) ? 3 : 0);
     hline(f, 18, 30, 41, C_ACCENT);
   }
   // wait 28..31

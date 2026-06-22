@@ -782,31 +782,79 @@ uint8_t* platform_get_glyph(uint32_t codepoint,
   if (!w || !h) return NULL;
   *w = 0;
   *h = 0;
-  HDC dc = GetDC(NULL);
+  const int canvas = pixel_size * 3;
+  BITMAPINFO bi;
+  ZeroMemory(&bi, sizeof(bi));
+  bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+  bi.bmiHeader.biWidth = canvas;
+  bi.bmiHeader.biHeight = -canvas;
+  bi.bmiHeader.biPlanes = 1;
+  bi.bmiHeader.biBitCount = 32;
+  bi.bmiHeader.biCompression = BI_RGB;
+
+  void* bits = NULL;
+  HDC screen = GetDC(NULL);
+  HDC dc = CreateCompatibleDC(screen);
+  HBITMAP bmp = CreateDIBSection(screen, &bi, DIB_RGB_COLORS, &bits, NULL, 0);
+  ReleaseDC(NULL, screen);
+  if (!dc || !bmp || !bits) {
+    if (dc) DeleteDC(dc);
+    if (bmp) DeleteObject(bmp);
+    return NULL;
+  }
+
   HFONT font = get_cjk_font(pixel_size);
-  HFONT old_font = (HFONT)SelectObject(dc, font);
+  HGDIOBJ old_bmp = SelectObject(dc, bmp);
+  HGDIOBJ old_font = SelectObject(dc, font);
+  RECT rc = {0, 0, canvas, canvas};
+  HBRUSH bg = CreateSolidBrush(RGB(0, 0, 0));
+  FillRect(dc, &rc, bg);
+  DeleteObject(bg);
+  SetBkMode(dc, TRANSPARENT);
+  SetTextColor(dc, RGB(255, 255, 255));
 
-  GLYPHMETRICS gm = {0};
-  MAT2 mat = {0};
-  mat.eM11.value = 1;  // identity
-  mat.eM22.value = 1;
+  wchar_t wc[2] = {(wchar_t)codepoint, 0};
+  TextOutW(dc, pixel_size / 2, pixel_size / 3, wc, 1);
 
-  wchar_t wc = (wchar_t)codepoint;  // BMP only; surrogates not handled (MVP)
-  DWORD needed = GetGlyphOutlineW(dc, wc, GGO_BITMAP, &gm, 0, NULL, &mat);
-  if (needed == GDI_ERROR || needed == 0) {
+  uint32_t* px = (uint32_t*)bits;
+  int min_x = canvas, min_y = canvas, max_x = -1, max_y = -1;
+  for (int y = 0; y < canvas; y++) {
+    for (int x = 0; x < canvas; x++) {
+      uint32_t p = px[y * canvas + x];
+      if ((p & 0x00FFFFFFu) != 0) {
+        if (x < min_x) min_x = x;
+        if (y < min_y) min_y = y;
+        if (x > max_x) max_x = x;
+        if (y > max_y) max_y = y;
+      }
+    }
+  }
+
+  if (max_x < min_x || max_y < min_y) {
     SelectObject(dc, old_font);
-    ReleaseDC(NULL, dc);
+    SelectObject(dc, old_bmp);
+    DeleteObject(bmp);
+    DeleteDC(dc);
     return NULL;
   }
-  uint8_t* buf = (uint8_t*)moyu_alloc(needed);
-  DWORD got = GetGlyphOutlineW(dc, wc, GGO_BITMAP, &gm, needed, buf, &mat);
+
+  *w = max_x - min_x + 1;
+  *h = max_y - min_y + 1;
+  int row_bytes = ((*w + 31) / 32) * 4;
+  uint8_t* out = (uint8_t*)moyu_alloc((size_t)row_bytes * (size_t)(*h));
+  memset(out, 0, (size_t)row_bytes * (size_t)(*h));
+  for (int y = 0; y < *h; y++) {
+    for (int x = 0; x < *w; x++) {
+      uint32_t p = px[(min_y + y) * canvas + (min_x + x)];
+      if ((p & 0x00FFFFFFu) != 0) {
+        out[y * row_bytes + (x / 8)] |= (uint8_t)(0x80 >> (x % 8));
+      }
+    }
+  }
+
   SelectObject(dc, old_font);
-  ReleaseDC(NULL, dc);
-  if (got == GDI_ERROR) {
-    moyu_free(buf);
-    return NULL;
-  }
-  *w = (int)gm.gmBlackBoxX;
-  *h = (int)gm.gmBlackBoxY;
-  return buf;
+  SelectObject(dc, old_bmp);
+  DeleteObject(bmp);
+  DeleteDC(dc);
+  return out;
 }

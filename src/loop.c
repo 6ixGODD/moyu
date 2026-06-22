@@ -234,6 +234,15 @@ bool moyu_app_request_llm(moyu_app* app, const char* prompt) {
   return moyu_app_request_llm_for(app, prompt, "reflection");
 }
 
+bool moyu_app_send_chat(moyu_app* app, const char* text) {
+  if (!app || !text || !text[0]) return false;
+  state_add_message(app->state, "user", text);
+  context_push(&app->ctx, CTX_INTERACTION, "quick_chat", text, NULL);
+  emotion_react(&app->emotion, 0.05f, 0.08f);
+  moyu_app_emit_anim(app, ANIM_OBSERVE);
+  return moyu_app_request_llm_for(app, text, "chat");
+}
+
 static void drain_async(moyu_app* app) {
   if (!app->async) return;
   async_result result;
@@ -322,7 +331,11 @@ static void handle_platform_event(moyu_app* app, const platform_event* pev) {
         app->mouse_down = false;
         app->pet_dragging = false;
         if (!dragged) {
-          moyu_app_emit_anim(app, ANIM_HAPPY);
+          int variant = (int)(pev->ts_ms % 3);
+          static const int anims[3] = {ANIM_HAPPY, ANIM_OBSERVE, ANIM_FOUND};
+          static const char* lines[3] = {"嘿。", "我在看你。", "收到。"};
+          moyu_app_emit_anim(app, anims[variant]);
+          moyu_app_emit_say(app, lines[variant], 1800);
           context_push(&app->ctx, CTX_INTERACTION, "click", "happy", NULL);
           emotion_react(&app->emotion, 0.08f, 0.12f);
           if (pev->ts_ms - app->last_pat_ms > 4000) app->pat_streak = 0;
@@ -343,9 +356,11 @@ static void handle_platform_event(moyu_app* app, const platform_event* pev) {
       }
       break;
     case PE_MOUSE_DOUBLE_CLICK:
-      if (app->chat) chat_ui_show(app->chat);
+      if (app->chat) chat_ui_show_quick_chat(app->chat);
       break;
     case PE_DROP_FILE: {
+      moyu_app_emit_anim(app, ANIM_WORK);
+      moyu_app_emit_say(app, "啊呜。", 1400);
       t_path_preview preview;
       if (!desktop_os_preview_path(pev->path, &preview)) {
         moyu_app_emit_info(app, "Could not inspect drop", pev->path, 2400);
@@ -371,6 +386,7 @@ static void handle_platform_event(moyu_app* app, const platform_event* pev) {
           builtin_collection_add_note(app, preview.title, body, "drag_drop_text");
         } else {
           moyu_app_emit_info(app, "Reading drop", preview.title, 2600);
+          moyu_app_emit_say(app, "我看看。", 1800);
         }
       } else if (preview.is_image && app->vision_enabled) {
         llm_result vr = llm_complete_with_image(
