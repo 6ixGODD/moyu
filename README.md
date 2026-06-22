@@ -111,7 +111,6 @@ Example Streamable HTTP MCP server:
 - [Build and Test](docs/build.md)
 - [User Guide](docs/user-guide.md)
 - [Chinese User Guide](docs/user-guide.zh-CN.md)
-- [v0.2 Requirements and Acceptance](TODO/README.md)
 
 ## License
 

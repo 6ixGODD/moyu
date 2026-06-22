@@ -111,7 +111,6 @@ Streamable HTTP MCP 示例：
 - [构建与测试](docs/build.md)
 - [用户指南](docs/user-guide.zh-CN.md)
 - [英文用户指南](docs/user-guide.md)
-- [v0.2 需求与验收](TODO/README.md)
 
 ## License
 
