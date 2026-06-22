@@ -26,7 +26,7 @@ MOYU 现在由两个协作进程组成：
 | Vision 分析 | 用独立多模态模型查看图片，并把结果回灌给桌宠 | `vision` 配置、拖放图片 |
 | 离线模式 | 没有模型时仍能使用记忆、收藏、草稿、权限和本地状态 | 所有本地斜杠命令 |
 
-这里的“收藏”不是浏览器书签。它是 MOYU 认为值得留下的发现，例如一个奇怪的小项目、一种反复出现的工作习惯，或者你明确让它保存的东西。每条收藏都是普通 Markdown 文件。现在一旦收藏发生变化，MOYU 会把这件事回显到桌面 GUI：弹出反馈卡片，并在控制面板里记住“最近收好的一样东西”。草稿则是尚未发布的候选文本，只能停留在自己的工作目录，必须由人类决定后续用途。
+这里的“收藏”不是浏览器书签。它是 MOYU 认为值得留下的发现，例如一个奇怪的小项目、一种反复出现的工作习惯，或者你明确让它保存的东西。每条收藏都是普通 Markdown 文件。现在一旦收藏发生变化，MOYU 会把这件事回显到桌面 GUI：弹出反馈卡片，并记住“最近收好的一样东西”。草稿则是尚未发布的候选文本，只能停留在自己的工作目录，必须由人类决定后续用途。
 
 ## 启动和交互
 
@@ -36,13 +36,13 @@ MOYU 现在由两个协作进程组成：
 build\moyu.exe
 ```
 
-双击桌宠，或者点击系统托盘小图标/右键自绘面板里的 **Open terminal chat**，会打开新的终端聊天窗口。也可以直接启动：
+双击桌宠，或者点击系统托盘小图标/Windows 原生右键菜单里的 **Open terminal chat**，会打开新的终端聊天窗口。也可以直接启动：
 
 ```bat
 build\moyu-chat.exe
 ```
 
-桌宠本体和 Windows 系统托盘小图标现在共用一套自绘控制面板：打开聊天、打开收藏、打开 `~/.moyu`、查看 Runtime 状态、暂停/恢复自治行为，以及退出。面板会额外展示它当前的 mood 和最近收藏。普通气泡不会抢键盘焦点。
+桌宠本体和 Windows 系统托盘小图标现在共用一套 Windows 原生右键菜单：打开聊天、打开收藏、打开 `~/.moyu`、查看 Runtime 状态、暂停/恢复自治行为，以及退出。普通气泡和反馈卡片不会抢键盘焦点。
 
 额外的桌面交互：
 
@@ -60,9 +60,8 @@ build\moyu-chat.exe
 /help                         查看命令
 /status                       查看模型、工作目录、MCP 和最近状态
 /config                       查看当前配置路径、密钥路径、base_url 和 model
-/model deepseek-v4-flash      立即切换模型并写回 config.json
-/baseurl https://api.deepseek.com/v1
-/provider deepseek            一键切到 DeepSeek 默认配置
+/model qwen-plus              立即切换模型并写回 config.json
+/baseurl https://dashscope.aliyuncs.com/compatible-mode/v1
 /apikey sk-...                把密钥写入 Windows DPAPI
 /pause                        暂停自治行为
 /resume                       恢复自治行为

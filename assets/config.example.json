@@ -1,18 +1,18 @@
 {
   "llm": {
-    "base_url": "https://api.deepseek.com/v1",
+    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
     "api_key": "",
     "api_key_source": "windows_dpapi",
-    "model": "deepseek-v4-flash",
+    "model": "qwen-plus",
     "max_tokens": 1024,
     "temperature": 0.8,
     "json_mode": false,
     "daily_limit": 50
   },
   "vision": {
-    "base_url": "https://api.deepseek.com/v1",
+    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
     "api_key": "",
-    "model": "deepseek-vl2",
+    "model": "qwen3-vl-flash",
     "max_tokens": 512,
     "temperature": 0.2
   },

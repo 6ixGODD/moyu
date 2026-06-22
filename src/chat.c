@@ -41,6 +41,7 @@ static const wchar_t* TRAY_CLASS = L"moyu_tray_window";
 static const wchar_t* PANEL_CLASS = L"moyu_panel_window";
 static LRESULT CALLBACK tray_wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 static LRESULT CALLBACK panel_wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
+static void perform_action(chat_ui* ui,int cmd);
 
 static HICON create_tray_icon(void) {
   const int w = 32, h = 32;
@@ -135,6 +136,30 @@ static char* to_utf8(const wchar_t* w) {
 static void open_home(chat_ui* ui,const char* child) {
   char* path=child?platform_join_path(ui->app->workdir->root,child):moyu_strdup(ui->app->workdir->root);
   wchar_t* w=to_wide(path);ShellExecuteW(NULL,L"open",w,NULL,NULL,SW_SHOWNORMAL);moyu_free(w);moyu_free(path);
+}
+
+static void show_native_menu(chat_ui* ui, int x, int y) {
+  if(!ui)return;
+  HMENU m=CreatePopupMenu();
+  AppendMenuW(m, MF_STRING, MENU_CHAT, L"Open Terminal Chat");
+  AppendMenuW(m, MF_STRING, MENU_RECENT, L"Open Collections");
+  AppendMenuW(m, MF_STRING, MENU_HOME, L"Open MOYU Home");
+  AppendMenuW(m, MF_STRING, MENU_DIAG, L"Runtime Status");
+  AppendMenuW(m, MF_SEPARATOR, 0, NULL);
+  AppendMenuW(m,
+              MF_STRING,
+              MENU_PAUSE,
+              ui->app->agent->autonomous_enabled ? L"Pause Autonomy"
+                                                 : L"Resume Autonomy");
+  AppendMenuW(m, MF_SEPARATOR, 0, NULL);
+  AppendMenuW(m, MF_STRING, MENU_EXIT, L"Quit MOYU");
+  SetForegroundWindow(ui->tray_hwnd ? ui->tray_hwnd : ui->panel_hwnd);
+  int cmd = TrackPopupMenu(
+      m, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY, x, y, 0,
+      ui->tray_hwnd ? ui->tray_hwnd : NULL, NULL);
+  DestroyMenu(m);
+  if (cmd) perform_action(ui, cmd);
+  PostMessageW(ui->tray_hwnd ? ui->tray_hwnd : ui->panel_hwnd, WM_NULL, 0, 0);
 }
 
 static COLORREF rgb(int r,int g,int b){return RGB(r,g,b);}
@@ -233,7 +258,11 @@ static LRESULT CALLBACK tray_wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       chat_ui_show(ui);
       return 0;
     }
-    if (lp == WM_RBUTTONUP || lp == WM_CONTEXTMENU || lp == WM_LBUTTONUP) {
+    if (lp == WM_RBUTTONUP || lp == WM_CONTEXTMENU) {
+      POINT p;GetCursorPos(&p);show_native_menu(ui,p.x,p.y);
+      return 0;
+    }
+    if (lp == WM_LBUTTONUP) {
       POINT p;GetCursorPos(&p);show_panel(ui,p.x,p.y);
       return 0;
     }
@@ -349,7 +378,7 @@ void chat_ui_append(chat_ui* ui,const char* role,const char* text){(void)ui;(voi
 bool chat_ui_visible(chat_ui* ui){return ui&&ui->chat_process&&WaitForSingleObject(ui->chat_process,0)==WAIT_TIMEOUT;}
 
 void chat_ui_context_menu(chat_ui* ui) {
-  POINT p;GetCursorPos(&p);show_panel(ui,p.x,p.y);
+  POINT p;GetCursorPos(&p);show_native_menu(ui,p.x,p.y);
 }
 
 void chat_ui_onboarding(chat_ui* ui) {

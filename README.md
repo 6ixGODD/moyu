@@ -1,34 +1,31 @@
 # MOYU
 
-MOYU 是一只寄居在桌面的轻量自治生物，也是一套约 1.8 MB 的 C/Lua Agent Runtime。
+MOYU is a lightweight autonomous desktop companion and a small C/Lua agent runtime.
 
-它不是随机播放动画的挂件，也不是通用办公助手。它会在用户授权的范围内形成信念、需求、习惯和一个正在进行的小计划，通过内置工具或 MCP 观察外界，把有意义的经历保存成用户可读的长期记忆，并允许人类纠正、塑造和让它忘记。
+It is not a random animation widget and not a generic office assistant. Within user-approved boundaries, it forms beliefs, habits, and a small active intention, observes the world through built-in tools or MCP, stores durable memories in human-readable files, and lets the human correct, shape, and prune that memory over time.
 
-## 核心能力
+Chinese README: [README.zh-CN.md](README.zh-CN.md)
 
-- **连续生命**：`~/.moyu/SOUL.md`、`MEMORY.md` 与 SQLite 状态跨重启保留。
-- **受限自主性**：单 intention、最多 3 步、持久预算、权限和超时。
-- **可塑性**：允许、拒绝、纠正、记住和忘记会改变后续策略。
-- **真实 MCP**：支持 stdio 与 Streamable HTTP；动态发现并注册工具。
-- **终端聊天**：双击宠物或右键打开独立 TUI，共享完整记忆与 Runtime，不引入 WebView/Electron。
-- **桌面交互层**：自绘控制面板、收藏反馈卡片、拖放收藏和可拖拽重定位，让 GUI 本身承载互动。
-- **多模态投喂**：文本文件本地预览后交给主模型摘要；图片可交给独立 vision 模型分析。
-- **离线完整**：没有 LLM/MCP 时仍可记忆、收藏、形成习惯和本地项目。
-- **低资源**：事件驱动，LLM 在阻塞 worker 中运行，dirty frame 才重绘。
+## Core capabilities
 
-## 默认形象
+- Persistent identity: `~/.moyu/SOUL.md`, `MEMORY.md`, and SQLite state survive restarts.
+- Bounded autonomy: one intention at a time, up to three steps, persistent budget, permissions, and deadlines.
+- Human shaping: allow, deny, correct, remember, and forget all change later behavior.
+- Real MCP: stdio and Streamable HTTP tool discovery are supported.
+- Terminal chat: double-click the pet or open `moyu-chat.exe` to talk to the same runtime without a WebView or Electron.
+- Desktop interaction: tray icon, native Windows context menu, drag-and-drop intake, hover feedback, and draggable repositioning.
+- Multimodal intake: text files are previewed locally and summarized by the main model; images can be analyzed by a separate vision model.
+- Low resource usage: event-driven rendering and blocking model work on a background worker.
 
-默认角色是程序化生成的 48×48 “奶油团子精灵”：暖奶油主体、炭黑简笔轮廓、短耳芽、短尾和鼠尾草绿标记。它不依赖外部图片，支持 12 种与 Runtime 状态对应的动作：idle、blink、sleep、happy、sad、observe、walk、work、wait、found、confused、giveup。
+## Build
 
-## 构建
-
-Windows 需要 Visual Studio 2022 C++ Build Tools 与 clang-cl：
+Windows requires Visual Studio 2022 C++ Build Tools and `clang-cl`:
 
 ```bat
 build.bat
 ```
 
-输出：
+Outputs:
 
 ```text
 build/moyu.exe
@@ -39,60 +36,45 @@ build/moyu-mcp-notes.exe
 build/moyu-mcp-weather.exe
 ```
 
-运行测试：
+Run tests:
 
 ```bat
 build\moyu-tests.exe
 ```
 
-测试当前 LLM 配置：
+Smoke-test the current LLM configuration:
 
 ```bat
 build\moyu.exe --smoke-llm
 ```
 
-## 首次运行
+## Run
 
 ```bat
 build\moyu.exe
 ```
 
-首次启动会：
+On first launch MOYU creates `~/.moyu/`, default SOUL and MEMORY files, a SQLite state database, and onboarding prompts for an observation root and low-frequency autonomy.
 
-1. 创建 `~/.moyu/`、默认 SOUL、MEMORY 和状态数据库。
-2. 将旧 `assets/config.json` 的 API key 用 Windows DPAPI 迁移到 `secrets.dat`。
-3. 询问是否授权一个只读观察目录。
-4. 询问是否允许低频自主行动。
+Interaction:
 
-双击宠物打开 `moyu-chat.exe` 交互式终端；桌宠右键和系统托盘小图标会唤起自绘控制面板，可暂停自主行为、查看状态、打开收藏或工作目录并退出。也可以直接运行 `build\moyu-chat.exe`。
+- Double-click the pet to open terminal chat.
+- Right-click the pet to open a native Windows context menu.
+- Right-click the tray icon to open the same native Windows context menu.
+- Drag a file or folder onto the pet to feed it something to inspect or keep.
+- Drag the pet to move it to another place on the desktop.
 
-额外的桌面交互：
+## Configuration
 
-- 把文件或目录拖到桌宠身上，它会把这次投喂记成一条收藏，并给出即时 GUI 反馈。
-- 拖入文本/代码文件时，它会本地读取片段后做摘要，不依赖服务端文件解析。
-- 拖入图片时，如果 `vision` 已配置，会走独立多模态模型分析。
-- 长按并拖动桌宠可以给它换停靠位置。
-- 连续摸它几下会触发不同的情绪反馈，而不只是随机动画。
+Long-lived configuration lives in `~/.moyu/config.json`.
 
-聊天支持：
+- Runtime config is loaded from disk at startup. It is not compiled into the binaries.
+- API keys are stored in `~/.moyu/secrets.dat` through Windows DPAPI, not plaintext config.
+- The config can include `llm`, `vision`, `owner`, `appearance`, `privacy`, `autonomy`, and `mcp_servers`.
 
-```text
-/remember 我喜欢安静的提醒
-/forget 安静的提醒
-/status
-/config
-/model deepseek-v4-flash
-/provider deepseek
-/pause
-/allow git.recent_commits *
-/tool git.recent_commits {"root":"D:\\WorkSpace\\project"}
-```
+See the complete example in [assets/config.example.json](assets/config.example.json).
 
-## 配置
-
-长期配置位于 `~/.moyu/config.json`，运行时可在 TUI 中通过 `/config`、`/model`、`/baseurl`、`/provider` 查看和修改。API key 不写在配置文件里，而是保存在 `~/.moyu/secrets.dat`，并由 Windows DPAPI 加密。配置现在还支持 `vision`、`owner` 和 `appearance.skin`。完整示例见 `assets/config.example.json`。
-
-stdio MCP：
+Example stdio MCP server:
 
 ```json
 {
@@ -103,7 +85,7 @@ stdio MCP：
 }
 ```
 
-Streamable HTTP MCP：
+Example Streamable HTTP MCP server:
 
 ```json
 {
@@ -113,26 +95,24 @@ Streamable HTTP MCP：
 }
 ```
 
-## 设计边界
+## Notes
 
-- Windows 是 v0.2 完整支持平台；Linux/macOS 后端仍为可编译 stub。
-- MCP v2025-11-25，兼容服务端协商其他版本；当前实现 tools 能力，不实现 resources/prompts/sampling/OAuth。
-- `observe` 可持久授权，`draft` 只产生草稿，`mutate` 必须由人类明确触发。
-- 默认每天最多 6 次自主观察和 5 次自主 LLM；无有效意图时休眠。
-- 用户文件不会被复制进数据库，大工具响应不会长期保存。
+- Windows is the fully supported platform today. Linux and macOS backends are still compile stubs.
+- `observe` permissions can be durable, `draft` writes only private output, and `mutate` requires an explicit human action.
+- User files are not copied wholesale into SQLite. Large tool results are not retained indefinitely.
 
-## 文档
+## Documentation
 
-- [架构](docs/architecture.md)
-- [设计决策](docs/design.md)
-- [记忆系统](docs/context.md)
-- [MCP 与工具](docs/mcp.md)
+- [Architecture](docs/architecture.md)
+- [Design](docs/design.md)
+- [Context and Memory](docs/context.md)
+- [MCP and Tools](docs/mcp.md)
 - [Lua Policy API](docs/lua_api.md)
-- [构建与测试](docs/build.md)
-- [使用、隐私与恢复](docs/user-guide.md)
-- [中文完整使用指南](docs/user-guide.zh-CN.md)
-- [v0.2 需求与验收](TODO/README.md)
+- [Build and Test](docs/build.md)
+- [User Guide](docs/user-guide.md)
+- [Chinese User Guide](docs/user-guide.zh-CN.md)
+- [v0.2 Requirements and Acceptance](TODO/README.md)
 
 ## License
 
-MIT。Lua 与 cJSON 使用 MIT；SQLite 官方 amalgamation 为 public domain。详见 `third_party/`。
+MIT. Lua and cJSON are MIT; the SQLite amalgamation is public domain. See `third_party/`.

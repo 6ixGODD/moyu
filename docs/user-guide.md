@@ -28,7 +28,7 @@ Implemented capabilities:
 | Vision analysis | Uses a separate multimodal model to inspect dropped images | `vision` config, image drag-and-drop |
 | Offline mode | Memory, collections, drafts, permissions and runtime state remain usable without an LLM | all local slash commands |
 
-Collections are not a browser bookmark folder. They are MOYU's durable findings: for example, an unusual repository, a recurring work pattern, or something the human explicitly asks it to keep. Each item is a readable Markdown file. When a collection changes, MOYU now reflects that back into the desktop GUI through an info card and a remembered "latest kept" line in its control panel. Drafts are proposed text that remains private until a human deliberately uses it elsewhere.
+Collections are not a browser bookmark folder. They are MOYU's durable findings: for example, an unusual repository, a recurring work pattern, or something the human explicitly asks it to keep. Each item is a readable Markdown file. When a collection changes, MOYU reflects that back into the desktop GUI through an info card and a remembered "latest kept" line. Drafts are proposed text that remains private until a human deliberately uses it elsewhere.
 
 ## Start and interact
 
@@ -38,13 +38,13 @@ Run the desktop creature:
 build\moyu.exe
 ```
 
-Double-click the creature, or use the tray icon / right-click panel and select **Open terminal chat**. You can also start chat directly:
+Double-click the creature, or use the tray icon / native right-click menu and select **Open terminal chat**. You can also start chat directly:
 
 ```bat
 build\moyu-chat.exe
 ```
 
-The desktop creature and the Windows tray icon both expose the same self-drawn control panel: open chat, open collections, open `~/.moyu`, view runtime status, pause/resume autonomy, or quit MOYU. The panel also shows MOYU's current mood and latest kept item. Speech bubbles do not take focus.
+The desktop creature and the Windows tray icon both expose the same native Windows context menu: open chat, open collections, open `~/.moyu`, view runtime status, pause/resume autonomy, or quit MOYU. Speech bubbles and info cards do not take focus.
 
 Extra GUI interaction:
 
@@ -62,9 +62,8 @@ Normal input is sent to the configured LLM with current SOUL, MEMORY and relevan
 /help
 /status
 /config
-/model deepseek-v4-flash
-/baseurl https://api.deepseek.com/v1
-/provider deepseek
+/model qwen-plus
+/baseurl https://dashscope.aliyuncs.com/compatible-mode/v1
 /apikey sk-...
 /pause
 /resume
